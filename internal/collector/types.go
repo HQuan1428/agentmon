@@ -22,6 +22,7 @@ type Session struct {
 	Total     int
 	Blocked   bool
 	NeedsHint string
+	jobID     string // bg jobId, used to locate jobs/<jobID>/state.json
 	Children  []Session
 	UpdatedAt int64
 }
