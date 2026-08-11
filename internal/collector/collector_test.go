@@ -17,7 +17,7 @@ func TestCollectInteractiveWithTodosAndSubagent(t *testing.T) {
 	writeFile(t, tp, todoLine(`[{"content":"a","status":"completed","activeForm":"a"},{"content":"b","status":"pending","activeForm":"b"}]`)+"\n"+
 		taskLine("B", "Review Task 1", "general-purpose")+"\n")
 
-	sessions, err := Collect(root)
+	sessions, err := Collect(root, NewScanner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestCollectBgBlocked(t *testing.T) {
 	writeFile(t, filepath.Join(root, "jobs", "job1", "state.json"),
 		`{"state":"blocked","detail":"pipeline 41/41 tasks done","needs":"decide: commit?"}`)
 
-	sessions, _ := Collect(root)
+	sessions, _ := Collect(root, NewScanner())
 	if len(sessions) != 1 {
 		t.Fatalf("want 1, got %d", len(sessions))
 	}

@@ -4,6 +4,7 @@ package collector
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +79,7 @@ func ParseSubagents(path string) []Session {
 	type spawn struct {
 		name, subtype string
 	}
-	order := []string{}         // tool_use ids in first-seen order
+	order := []string{} // tool_use ids in first-seen order
 	spawns := map[string]spawn{}
 	done := map[string]bool{}
 
@@ -111,13 +112,109 @@ func ParseSubagents(path string) []Session {
 	for _, id := range order {
 		sp := spawns[id]
 		s := Session{
-			ID:      id,
-			Name:    sp.name,
-			Kind:    "sub:" + sp.subtype,
-			Mode:    Indeterminate,
-			Status:  "busy",
+			ID:     id,
+			Name:   sp.name,
+			Kind:   "sub:" + sp.subtype,
+			Mode:   Indeterminate,
+			Status: "busy",
 		}
 		if done[id] {
+			s.Status = "idle"
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+type scanState struct {
+	offset    int64
+	haveTodos bool
+	done      int
+	total     int
+	order     []string
+	spawns    map[string]struct{ name, subtype string }
+	doneSub   map[string]bool
+}
+
+type Scanner struct {
+	states map[string]*scanState
+}
+
+func NewScanner() *Scanner { return &Scanner{states: map[string]*scanState{}} }
+
+func (sc *Scanner) Scan(path string) (done, total int, todosFound bool, subs []Session) {
+	st := sc.states[path]
+	if st == nil {
+		st = &scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}}
+		sc.states[path] = st
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return st.done, st.total, st.haveTodos, st.buildSubs()
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && info.Size() < st.offset {
+		*st = scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}} // rotated
+	}
+	if _, err := f.Seek(st.offset, io.SeekStart); err != nil {
+		return st.done, st.total, st.haveTodos, st.buildSubs()
+	}
+	reader := bufio.NewReader(f)
+	for {
+		raw, err := reader.ReadBytes('\n')
+		if len(raw) > 0 && (err == nil) { // only consume complete lines
+			st.offset += int64(len(raw))
+			st.apply(raw)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return st.done, st.total, st.haveTodos, st.buildSubs()
+}
+
+func (st *scanState) apply(raw []byte) {
+	var line transcriptLine
+	if json.Unmarshal(raw, &line) != nil {
+		return
+	}
+	for _, c := range line.Message.Content {
+		switch {
+		case c.Type == "tool_use" && c.Name == "TodoWrite":
+			var in struct {
+				Todos []todoItem `json:"todos"`
+			}
+			if json.Unmarshal(c.Input, &in) == nil {
+				d := 0
+				for _, td := range in.Todos {
+					if td.Status == "completed" {
+						d++
+					}
+				}
+				st.done, st.total, st.haveTodos = d, len(in.Todos), true
+			}
+		case c.Type == "tool_use" && (c.Name == "Task" || c.Name == "Agent"):
+			var in struct {
+				Description  string `json:"description"`
+				SubagentType string `json:"subagent_type"`
+			}
+			_ = json.Unmarshal(c.Input, &in)
+			if _, seen := st.spawns[c.ID]; !seen {
+				st.order = append(st.order, c.ID)
+			}
+			st.spawns[c.ID] = struct{ name, subtype string }{in.Description, in.SubagentType}
+		case c.Type == "tool_result" && c.ToolUseID != "":
+			st.doneSub[c.ToolUseID] = true
+		}
+	}
+}
+
+func (st *scanState) buildSubs() []Session {
+	var out []Session
+	for _, id := range st.order {
+		sp := st.spawns[id]
+		s := Session{ID: id, Name: sp.name, Kind: "sub:" + sp.subtype, Mode: Indeterminate, Status: "busy"}
+		if st.doneSub[id] {
 			s.Status = "idle"
 		}
 		out = append(out, s)

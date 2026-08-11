@@ -2,7 +2,7 @@ package collector
 
 import "sort"
 
-func Collect(root string) ([]Session, error) {
+func Collect(root string, sc *Scanner) ([]Session, error) {
 	sessions, err := ScanSessions(root)
 	if err != nil {
 		return nil, err
@@ -20,14 +20,15 @@ func Collect(root string) ([]Session, error) {
 				continue
 			}
 		}
-		// interactive (or bg without a job file): use transcript
+		// interactive (or bg without a job file): use transcript scanner
 		tp := TranscriptPath(root, s.Cwd, s.ID)
-		if done, total, found := ParseTodos(tp); found {
+		done, total, found, subs := sc.Scan(tp)
+		if found {
 			s.Mode, s.Done, s.Total = Determinate, done, total
 		} else {
 			s.Mode = Indeterminate
 		}
-		s.Children = ParseSubagents(tp)
+		s.Children = subs
 	}
 	sort.Slice(sessions, func(a, b int) bool {
 		if sessions[a].Project != sessions[b].Project {
