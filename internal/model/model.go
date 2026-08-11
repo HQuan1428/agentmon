@@ -14,6 +14,10 @@ import (
 
 const barWidth = 16
 
+// graceDuration is how long a session that just completed stays on screen
+// (rendered faint) before it disappears from the view.
+const graceDuration = 3 * time.Second
+
 type pollMsg []collector.Session
 type animMsg struct{}
 
@@ -23,6 +27,8 @@ type Model struct {
 	scanner  *collector.Scanner
 	interval time.Duration
 	sessions []collector.Session
+	doneAt   map[string]time.Time // session/subagent ID -> when it first became done
+	nowFn    func() time.Time     // injectable clock (tests override)
 	phase    int
 	scroll   int
 	height   int
@@ -32,7 +38,15 @@ type Model struct {
 }
 
 func New(root string, player *sound.Player, interval time.Duration) Model {
-	return Model{root: root, player: player, scanner: collector.NewScanner(), interval: interval, soundOn: true}
+	return Model{
+		root:     root,
+		player:   player,
+		scanner:  collector.NewScanner(),
+		interval: interval,
+		soundOn:  true,
+		doneAt:   map[string]time.Time{},
+		nowFn:    time.Now,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -57,14 +71,74 @@ func (m Model) scheduleNextPoll() tea.Cmd {
 type pollTickMsg struct{}
 
 func (m Model) applyPoll(sessions []collector.Session) (Model, []Event) {
-	if !m.seeded {
+	firstPoll := !m.seeded
+	var evs []Event
+	if firstPoll {
 		m.seeded = true
-		m.sessions = sessions
-		return m, nil
+	} else {
+		evs = DiffEvents(m.sessions, sessions)
 	}
-	evs := DiffEvents(m.sessions, sessions)
 	m.sessions = sessions
+	m.updateDoneTimes(sessions, firstPoll)
 	return m, evs
+}
+
+// updateDoneTimes stamps the moment each session/subagent first becomes done
+// (so the view can grant it a grace window), clears the stamp when it goes
+// active again, and prunes stamps for IDs no longer present. Sessions already
+// done on the very first poll are stamped as already-expired so they are
+// hidden immediately rather than granted a grace window at startup.
+func (m Model) updateDoneTimes(sessions []collector.Session, firstPoll bool) {
+	now := m.nowFn()
+	seen := map[string]bool{}
+	var walk func([]collector.Session)
+	walk = func(ss []collector.Session) {
+		for _, s := range ss {
+			seen[s.ID] = true
+			if s.IsDone() {
+				if _, ok := m.doneAt[s.ID]; !ok {
+					if firstPoll {
+						m.doneAt[s.ID] = now.Add(-graceDuration - time.Second)
+					} else {
+						m.doneAt[s.ID] = now
+					}
+				}
+			} else {
+				delete(m.doneAt, s.ID)
+			}
+			walk(s.Children)
+		}
+	}
+	walk(sessions)
+	for id := range m.doneAt {
+		if !seen[id] {
+			delete(m.doneAt, id)
+		}
+	}
+}
+
+// displayView returns the sessions to render — dropping any done session or
+// subagent whose grace window has elapsed — plus the set of IDs still within
+// their grace window, which the renderer draws faint.
+func (m Model) displayView() ([]collector.Session, map[string]bool) {
+	now := m.nowFn()
+	dim := map[string]bool{}
+	var filter func([]collector.Session) []collector.Session
+	filter = func(ss []collector.Session) []collector.Session {
+		var out []collector.Session
+		for _, s := range ss {
+			if s.IsDone() {
+				if t, ok := m.doneAt[s.ID]; ok && now.Sub(t) >= graceDuration {
+					continue // grace elapsed → hide
+				}
+				dim[s.ID] = true // still within grace → show faint
+			}
+			s.Children = filter(s.Children)
+			out = append(out, s)
+		}
+		return out
+	}
+	return filter(m.sessions), dim
 }
 
 func (m Model) toggleSound() Model { m.soundOn = !m.soundOn; return m }
@@ -120,16 +194,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // split into individual lines, with no trailing empty line. View and
 // maxScroll both build on this so their notion of "lines" always agrees.
 func (m Model) renderLines() []string {
-	view := m.sessions
+	view, dim := m.displayView()
 	if m.collapse {
 		view = stripChildren(view)
 	}
 	header := "agentmon — q quit · s sound · c tree · ↑/↓ scroll\n\n"
 	var full string
 	if len(view) == 0 {
-		full = header + "  (no live sessions)\n"
+		full = header + "  (no active sessions)\n"
 	} else {
-		full = header + render.RenderView(view, barWidth, m.phase)
+		full = header + render.RenderView(view, barWidth, m.phase, dim)
 	}
 	full = strings.TrimSuffix(full, "\n")
 	return strings.Split(full, "\n")

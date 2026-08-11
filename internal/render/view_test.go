@@ -16,7 +16,7 @@ func TestRenderViewGroupsAndTree(t *testing.T) {
 			}},
 		{Name: "bgjob", Project: "proj", Kind: "bg", JobState: "blocked", Blocked: true, NeedsHint: "commit now?", Mode: collector.Determinate, Done: 41, Total: 41},
 	}
-	out := RenderView(sessions, 12, 0)
+	out := RenderView(sessions, 12, 0, nil)
 
 	if !strings.Contains(out, "▸ proj") {
 		t.Errorf("missing project header:\n%s", out)
@@ -29,5 +29,22 @@ func TestRenderViewGroupsAndTree(t *testing.T) {
 	}
 	if !strings.Contains(out, "needs: commit now?") {
 		t.Errorf("missing needs hint:\n%s", out)
+	}
+}
+
+func TestRenderViewDimsMarkedIDs(t *testing.T) {
+	sessions := []collector.Session{
+		{ID: "x", Name: "done-one", Project: "proj", Mode: collector.Indeterminate, Status: "idle"},
+	}
+	plain := RenderView(sessions, 12, 0, nil)
+	if strings.Contains(plain, "\x1b[2m") {
+		t.Errorf("nil dim set should not add faint codes:\n%q", plain)
+	}
+	dimmed := RenderView(sessions, 12, 0, map[string]bool{"x": true})
+	if !strings.Contains(dimmed, "\x1b[2m") {
+		t.Errorf("expected faint code around dimmed row:\n%q", dimmed)
+	}
+	if !strings.Contains(dimmed, "done-one") {
+		t.Errorf("dimmed row should still contain its content:\n%q", dimmed)
 	}
 }
