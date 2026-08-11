@@ -92,8 +92,11 @@ type Session struct {
 1. Đọc `sessions/<pid>.json`. Lọc **PID chết** bằng `syscall.Kill(pid, 0)` (ESRCH → bỏ).
 2. Nếu `kind == "bg"` và có `jobs/<jobId>/state.json`:
    - `JobState` = `state`; `Blocked` = `state=="blocked"`; `NeedsHint` = `needs`.
-   - Progress: nếu có tổng task suy ra được từ `detail`/`inFlight` → **Determinate**
-     (`Done/Total`); nếu không rõ → **Indeterminate**.
+   - Progress (thứ tự ưu tiên):
+     1. Nếu `detail` khớp regex `(\d+)/(\d+)\s+tasks` (vd `"pipeline 41/41 tasks done"`)
+        → **Determinate** `Done/Total` từ 2 số đó.
+     2. Ngược lại nếu `inFlight.tasks + inFlight.queued > 0` → **Indeterminate** (đang chạy).
+     3. Ngược lại → **Indeterminate**, dựa `isDone` theo `JobState` (done/idle = đặc 100%).
 3. Ngược lại (interactive) tìm transcript theo `encoded-cwd` + `sessionId`:
    - Quét **lần gọi TodoWrite cuối cùng** → `input.todos[]`.
      `Total = len`, `Done = số status=="completed"` → **Determinate**.
