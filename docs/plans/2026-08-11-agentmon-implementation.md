@@ -6,7 +6,7 @@
 
 **Architecture:** Three isolated layers — `collector` reads `~/.claude/` files into `[]Session` (pure, file-driven), `model` holds the Bubble Tea state and edge-detects chime events across poll snapshots, `render` draws the pillar bars and subagent tree. A `sound` package synthesizes chimes. `main` wires a ~1s poll tick and a ~100ms animation tick.
 
-**Tech Stack:** Go 1.26, `github.com/charmbracelet/bubbletea` (TUI loop), `github.com/hajimehoshi/oto/v2` (audio out). No other runtime deps. Standard library for all file/JSON/regex work.
+**Tech Stack:** Go 1.26, `github.com/charmbracelet/bubbletea` (TUI loop), `github.com/jfreymuth/pulse` (pure-Go PulseAudio client for audio out — chosen over `hajimehoshi/oto` because oto requires ALSA dev headers via cgo, which will not build without `alsa-lib`; `jfreymuth/pulse` builds with CGO disabled and connects directly to the PulseAudio server socket, which WSLg provides). No other runtime deps. Standard library for all file/JSON/regex work.
 
 ## Global Constraints
 
@@ -1553,13 +1553,15 @@ git commit -m "feat(model): edge-detect done/approval chime events"
 **Interfaces:**
 - Consumes: `model.EventKind` is NOT imported (avoid cycle) — sound defines its own `type Chime int` (`ChimeDone=0`, `ChimeApproval=1`).
 - Produces: `func Synth(c Chime, sampleRate int) []byte` — returns signed 16-bit LE mono PCM for a two-note "ting-ting" motif (ChimeDone rises E5→A5; ChimeApproval repeats A5–A5), amplitude ≤ 0.2, each note fades out (envelope reaches ~0 at note end). `func NewPlayer() *Player`; `func (p *Player) Play(c Chime)` (non-blocking; no-op if audio unavailable); `func (p *Player) Enabled() bool`.
-- Add dependency `github.com/hajimehoshi/oto/v2`.
+- Add dependency `github.com/jfreymuth/pulse` (pure-Go PulseAudio client; builds without cgo/ALSA).
+
+**Backend note:** `Synth` is backend-independent (pure PCM math) and stays exactly as below. Only the `Player` output path uses PulseAudio. `jfreymuth/pulse` was chosen over `hajimehoshi/oto` because oto requires ALSA dev headers via cgo and will not build without `alsa-lib`; the pure-Go pulse client builds with `CGO_ENABLED=0` (verified) and connects to the PulseAudio server socket that WSLg exposes at `$PULSE_SERVER`.
 
 - [ ] **Step 1: Add the audio dependency**
 
 Run:
 ```bash
-go get github.com/hajimehoshi/oto/v2@v2.4.2
+go get github.com/jfreymuth/pulse
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -1578,7 +1580,11 @@ func TestSynthLengthAndBounds(t *testing.T) {
         t.Fatalf("pcm bytes=%d (must be non-zero, even)", len(pcm))
     }
     // Amplitude bound: no sample magnitude exceeds 0.2*32767 with headroom.
-    limit := int16(0.25 * 32767)
+    // (limitF is a float64 var, not an untyped constant, so the int16
+    // conversion is a runtime truncation Go accepts — int16(0.25*32767)
+    // as a constant would be rejected as a non-integer constant.)
+    limitF := 0.25 * 32767.0
+    limit := int16(limitF)
     for i := 0; i+1 < len(pcm); i += 2 {
         s := int16(pcm[i]) | int16(pcm[i+1])<<8
         if s > limit || s < -limit {
@@ -1619,9 +1625,10 @@ import (
     "bytes"
     "log"
     "math"
-    "sync"
+    "time"
 
-    "github.com/hajimehoshi/oto/v2"
+    "github.com/jfreymuth/pulse"
+    "github.com/jfreymuth/pulse/proto"
 )
 
 type Chime int
@@ -1680,60 +1687,103 @@ func Synth(c Chime, sr int) []byte {
 }
 
 type Player struct {
-    ctx     *oto.Context
+    client  *pulse.Client
     enabled bool
-    mu      sync.Mutex
     pcm     map[Chime][]byte
+    queue   chan Chime
 }
 
-var initOnce sync.Once
-
 func NewPlayer() *Player {
-    p := &Player{pcm: map[Chime][]byte{
-        ChimeDone:     Synth(ChimeDone, sampleRate),
-        ChimeApproval: Synth(ChimeApproval, sampleRate),
-    }}
-    ctx, ready, err := oto.NewContext(sampleRate, 1, 2)
+    p := &Player{
+        pcm: map[Chime][]byte{
+            ChimeDone:     Synth(ChimeDone, sampleRate),
+            ChimeApproval: Synth(ChimeApproval, sampleRate),
+        },
+        queue: make(chan Chime, 8),
+    }
+    c, err := pulse.NewClient()
     if err != nil {
-        initOnce.Do(func() { log.Printf("agentmon: audio disabled (%v)", err) })
+        // WSLg/headless without a reachable PulseAudio server lands here.
+        log.Printf("agentmon: audio disabled (%v)", err)
         return p
     }
-    <-ready
-    p.ctx = ctx
+    p.client = c
     p.enabled = true
+    go p.worker()
     return p
 }
 
 func (p *Player) Enabled() bool { return p.enabled }
 
+// Play is non-blocking: it enqueues a chime, dropping it if the queue is
+// full so chimes never pile up or block the caller (the coalesce rule).
 func (p *Player) Play(c Chime) {
     if !p.enabled {
         return
     }
-    p.mu.Lock()
-    data := p.pcm[c]
-    p.mu.Unlock()
-    go func() {
-        player := p.ctx.NewPlayer(bytes.NewReader(data))
-        player.Play()
-        // Player plays asynchronously; keep a reference until drained.
-        for player.IsPlaying() {
+    select {
+    case p.queue <- c:
+    default:
+    }
+}
+
+// worker plays queued chimes one at a time so overlapping events never
+// spawn unbounded concurrent streams.
+func (p *Player) worker() {
+    for c := range p.queue {
+        p.playOne(p.pcm[c])
+    }
+}
+
+func (p *Player) playOne(data []byte) {
+    i := 0
+    reader := pulse.Int16Reader(func(out []int16) (int, error) {
+        for k := range out {
+            if i+1 >= len(data) {
+                return k, pulse.EndOfData
+            }
+            out[k] = int16(data[i]) | int16(data[i+1])<<8
+            i += 2
         }
-        player.Close()
-    }()
+        return len(out), nil
+    })
+    stream, err := p.client.NewPlayback(reader,
+        pulse.PlaybackSampleRate(sampleRate),
+        pulse.PlaybackChannels(proto.ChannelMap{proto.ChannelMono}))
+    if err != nil {
+        return
+    }
+    stream.Start()
+    // Sleep the known clip length instead of Drain(): Drain() can block
+    // indefinitely on some PulseAudio sinks (observed hanging on WSLg's RDP
+    // sink). The clip is a fixed length, so a timed wait plus a small margin
+    // lets the tail play out, then we stop.
+    time.Sleep(clipDuration() + 80*time.Millisecond)
+    stream.Stop()
+    stream.Close()
+}
+
+// clipDuration is the wall-clock length of one motif: two notes + one gap.
+func clipDuration() time.Duration {
+    secs := 2*noteDur + gapDur
+    return time.Duration(secs * float64(time.Second))
 }
 ```
+
+(`bytes` stays imported because `Synth` uses `bytes.Buffer`; `log`, `math`, `time`, `pulse`, and `proto` are all referenced above.)
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `go test ./internal/sound/ -v`
 Expected: PASS. (Tests exercise `Synth` only; `NewPlayer`/`Play` are manually verified in Task 13.)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Build and commit**
+
+Run `go build ./...` and `go vet ./...` (both must be clean — this also proves the pulse client compiles with the current toolchain). Then:
 
 ```bash
 git add internal/sound/ go.mod go.sum
-git commit -m "feat(sound): synth gentle done/approval chimes with silent fallback"
+git commit -m "feat(sound): synth gentle chimes over pure-Go PulseAudio, silent fallback"
 ```
 
 ---

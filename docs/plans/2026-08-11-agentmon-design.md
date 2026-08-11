@@ -140,9 +140,12 @@ Edge-detect trong `model`, so hai snapshot poll liên tiếp:
 - Hai motif phân biệt bằng tai: DONE (đi lên, vd E5→A5), APPROVAL (nhắc lại 2 nốt
   cùng cao, vd A5–A5) — miễn khác nhau rõ.
 - Hàng đợi **non-blocking**, **gộp** nếu nhiều sự kiện trùng thời điểm (không ting chồng).
-- Phát nền qua `hajimehoshi/oto` (hoặc tương đương). **Fallback**: nếu init audio thất
-  bại (thường gặp trên WSL2 không có audio server) → log **một lần**, tự tắt tiếng,
-  **không crash**. Cờ `--no-sound` tắt hẳn; phím `s` bật/tắt lúc chạy.
+- Phát nền qua `github.com/jfreymuth/pulse` — client PulseAudio **thuần Go** (không cgo,
+  không cần ALSA headers; nối thẳng socket `$PULSE_SERVER` mà WSLg cung cấp). Đã đổi từ
+  `hajimehoshi/oto` vì oto bắt buộc ALSA dev headers qua cgo nên không build được nếu thiếu
+  `alsa-lib`. **Fallback**: nếu init audio thất bại (headless / không có PulseAudio server)
+  → log **một lần**, tự tắt tiếng, **không crash**. Cờ `--no-sound` tắt hẳn; phím `s`
+  bật/tắt lúc chạy.
 
 ## 6. Render (ví dụ)
 
