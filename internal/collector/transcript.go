@@ -67,3 +67,60 @@ func ParseTodos(path string) (done, total int, found bool) {
 	}
 	return done, total, found
 }
+
+func ParseSubagents(path string) []Session {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	type spawn struct {
+		name, subtype string
+	}
+	order := []string{}         // tool_use ids in first-seen order
+	spawns := map[string]spawn{}
+	done := map[string]bool{}
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	for sc.Scan() {
+		var line transcriptLine
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		for _, c := range line.Message.Content {
+			switch {
+			case c.Type == "tool_use" && (c.Name == "Task" || c.Name == "Agent"):
+				var in struct {
+					Description  string `json:"description"`
+					SubagentType string `json:"subagent_type"`
+				}
+				_ = json.Unmarshal(c.Input, &in)
+				if _, seen := spawns[c.ID]; !seen {
+					order = append(order, c.ID)
+				}
+				spawns[c.ID] = spawn{name: in.Description, subtype: in.SubagentType}
+			case c.Type == "tool_result" && c.ToolUseID != "":
+				done[c.ToolUseID] = true
+			}
+		}
+	}
+
+	var out []Session
+	for _, id := range order {
+		sp := spawns[id]
+		s := Session{
+			ID:      id,
+			Name:    sp.name,
+			Kind:    "sub:" + sp.subtype,
+			Mode:    Indeterminate,
+			Status:  "busy",
+		}
+		if done[id] {
+			s.Status = "idle"
+		}
+		out = append(out, s)
+	}
+	return out
+}

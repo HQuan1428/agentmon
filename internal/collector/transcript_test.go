@@ -41,3 +41,37 @@ func TestParseTodosNoneFound(t *testing.T) {
 		t.Error("expected found=false for missing file")
 	}
 }
+
+func taskLine(id, desc, subtype string) string {
+	return `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"` + id + `","name":"Task","input":{"description":"` + desc + `","subagent_type":"` + subtype + `"}}]}}`
+}
+func resultLine(useID string) string {
+	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + useID + `"}]}}`
+}
+
+func TestParseSubagents(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "x.jsonl")
+	// task A completed, task B still running
+	writeFile(t, path, taskLine("A", "Implement Task 1", "general-purpose")+"\n"+
+		resultLine("A")+"\n"+
+		taskLine("B", "Review Task 1", "general-purpose")+"\n")
+
+	subs := ParseSubagents(path)
+	if len(subs) != 2 {
+		t.Fatalf("want 2 subagents, got %d", len(subs))
+	}
+	byName := map[string]Session{}
+	for _, s := range subs {
+		byName[s.Name] = s
+	}
+	if !byName["Implement Task 1"].IsDone() {
+		t.Error("task A should be done")
+	}
+	if byName["Review Task 1"].IsDone() {
+		t.Error("task B should still be running")
+	}
+	if byName["Review Task 1"].Kind != "sub:general-purpose" {
+		t.Errorf("kind=%q", byName["Review Task 1"].Kind)
+	}
+}
