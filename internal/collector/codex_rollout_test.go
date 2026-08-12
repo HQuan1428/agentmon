@@ -266,6 +266,21 @@ func TestCodexScannerRejectsMalformedSessionMetaSourceOrTimestamp(t *testing.T) 
 	}
 }
 
+func TestCodexScannerRejectsNullSessionMetaTimestamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	writeFile(t, path, `{"type":"session_meta","payload":{"id":"original","cwd":"/work/original","source":"cli","timestamp":"2026-08-12T05:23:13.436Z"}}`+"\n")
+
+	scanner := NewCodexScanner()
+	if got := scanner.Scan(path); got.NativeID != "original" || got.Cwd != "/work/original" || got.Source != "cli" || got.UpdatedAt != 1786512193436 {
+		t.Fatalf("original snapshot=%+v", got)
+	}
+	appendFile(t, path, `{"type":"session_meta","payload":{"id":"changed","cwd":"/work/changed","source":"subagent","timestamp":null}}`+"\n")
+
+	if got := scanner.Scan(path); got.NativeID != "original" || got.Cwd != "/work/original" || got.Source != "cli" || got.UpdatedAt != 1786512193436 {
+		t.Fatalf("snapshot after null timestamp=%+v", got)
+	}
+}
+
 func TestCodexScannerRetainsModelAfterBlankOrMalformedEvidence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	writeFile(t, path, strings.Join([]string{

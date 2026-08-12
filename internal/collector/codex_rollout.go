@@ -147,7 +147,7 @@ func (st *codexRolloutState) apply(raw []byte) {
 			Cwd       *string         `json:"cwd"`
 			ParentID  *string         `json:"parent_thread_id"`
 			Source    json.RawMessage `json:"source"`
-			Timestamp *string         `json:"timestamp"`
+			Timestamp json.RawMessage `json:"timestamp"`
 		}
 		if json.Unmarshal(line.Payload, &payload) != nil || payload.ID == nil || payload.Cwd == nil || strings.TrimSpace(*payload.ID) == "" || strings.TrimSpace(*payload.Cwd) == "" {
 			return
@@ -160,9 +160,13 @@ func (st *codexRolloutState) apply(raw []byte) {
 				return
 			}
 		}
-		if payload.Timestamp != nil {
+		if len(payload.Timestamp) > 0 {
+			var timestamp string
+			if json.Unmarshal(payload.Timestamp, &timestamp) != nil {
+				return
+			}
 			var ok bool
-			updatedAt, ok = codexUpdatedAt(*payload.Timestamp)
+			updatedAt, ok = codexUpdatedAt(timestamp)
 			if !ok {
 				return
 			}
