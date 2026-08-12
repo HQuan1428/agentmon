@@ -63,7 +63,7 @@ func RenderBar(s collector.Session, width, phase int) string {
 	case StateExit:
 		return strings.Repeat(empty, width)
 	case StateIdle:
-		return idleBar(width, phase)
+		return idleBar(phase)
 	case StateSweep:
 		return sweepBar(width, phase)
 	case StateBlocked:
@@ -102,14 +102,11 @@ func fillBar(s collector.Session, width, phase int) string {
 	return strings.Join(runes, "")
 }
 
-// idleBar is an empty track with a slow pulsing dot in the middle.
-func idleBar(width, phase int) string {
-	runes := make([]string, width)
-	for i := range runes {
-		runes[i] = empty
-	}
-	runes[width/2] = pulseGlyphs[phase%len(pulseGlyphs)]
-	return strings.Join(runes, "")
+// idleBar is a slow pulsing dot flanked by 3 faint dots each side: "⋮⋮⋮·⋮⋮⋮".
+// It is a fixed 7 cells (not the full bar width); progressCell pads the column.
+func idleBar(phase int) string {
+	flank := strings.Repeat(empty, 3)
+	return flank + pulseGlyphs[phase%len(pulseGlyphs)] + flank
 }
 
 // sweepBar bounces the gradient block along an empty track (indeterminate work).

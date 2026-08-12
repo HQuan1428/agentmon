@@ -39,12 +39,12 @@ func TestRenderBarIdlePulse(t *testing.T) {
 	s := collector.Session{Mode: collector.Indeterminate, Status: "idle"}
 	seen := map[string]bool{}
 	for ph := 0; ph < len(pulseGlyphs); ph++ {
-		bar := RenderBar(s, 11, ph)
-		if runeLen(bar) != 11 {
-			t.Fatalf("width=%d want 11 (%q)", runeLen(bar), bar)
+		bar := RenderBar(s, 15, ph)
+		if runeLen(bar) != 7 { // fixed 3 + pulse + 3, no padding
+			t.Fatalf("idle bar width=%d want 7 (%q)", runeLen(bar), bar)
 		}
-		if nonEmpty(bar) != 1 {
-			t.Errorf("idle should have exactly one pulse cell (%q)", bar)
+		if strings.Count(bar, empty) != 6 {
+			t.Errorf("idle should have 6 flanking dots (%q)", bar)
 		}
 		seen[bar] = true
 	}
