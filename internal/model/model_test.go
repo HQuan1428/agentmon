@@ -11,8 +11,21 @@ import (
 	"agentmon/internal/collector"
 )
 
+type fakeCollectionSource struct{ result collector.Collection }
+
+func (f fakeCollectionSource) Collect() collector.Collection { return f.result }
+
+func TestPollCmdUsesNormalizedSource(t *testing.T) {
+	source := fakeCollectionSource{result: collector.Collection{Sessions: []collector.Session{{ID: "codex:1"}}}}
+	m := New(source, nil, time.Second)
+	msg := m.pollCmd()().(pollMsg)
+	if len(msg) != 1 || msg[0].ID != "codex:1" {
+		t.Fatalf("msg=%+v", msg)
+	}
+}
+
 func TestApplyPollFiresEvents(t *testing.T) {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	m.sessions = []collector.Session{{ID: "a", Mode: collector.Determinate, Done: 6, Total: 10}}
 	m.seeded = true
 	m2, evs := m.applyPoll([]collector.Session{{ID: "a", Mode: collector.Determinate, Done: 10, Total: 10}})
@@ -25,7 +38,7 @@ func TestApplyPollFiresEvents(t *testing.T) {
 }
 
 func TestApplyPollFirstPollNoChime(t *testing.T) {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	sessions := []collector.Session{
 		{ID: "a", Mode: collector.Determinate, Done: 10, Total: 10}, // already done
 		{ID: "b", Kind: "bg", Blocked: true, NeedsHint: "approve pls"},
@@ -45,7 +58,7 @@ func TestApplyPollFirstPollNoChime(t *testing.T) {
 // seededModelAt returns a model with a fixed clock, already past the first
 // poll so applyPoll takes the diffing path.
 func seededModelAt(now time.Time) Model {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	m.nowFn = func() time.Time { return now }
 	m.seeded = true
 	return m
@@ -101,7 +114,7 @@ func TestDoneThenBusyAgainVisibleNotDimmed(t *testing.T) {
 
 func TestFirstPollDoneHiddenImmediately(t *testing.T) {
 	t0 := time.Unix(1000, 0)
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	m.nowFn = func() time.Time { return t0 }
 	m, evs := m.applyPoll([]collector.Session{idle("a")})
 	if len(evs) != 0 {
@@ -114,7 +127,7 @@ func TestFirstPollDoneHiddenImmediately(t *testing.T) {
 }
 
 func TestToggleSound(t *testing.T) {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	if !m.soundOn {
 		t.Fatal("sound should default on")
 	}
@@ -140,7 +153,7 @@ func manySessions(n int) []collector.Session {
 }
 
 func TestViewWindowsToHeight(t *testing.T) {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	m, _ = m.applyPoll(manySessions(10))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 5})
@@ -154,7 +167,7 @@ func TestViewWindowsToHeight(t *testing.T) {
 }
 
 func TestScrollClampsAtBottom(t *testing.T) {
-	m := New("/fake", nil, time.Second)
+	m := New(fakeCollectionSource{}, nil, time.Second)
 	m, _ = m.applyPoll(manySessions(10))
 
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 5})

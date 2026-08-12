@@ -18,10 +18,13 @@ const graceDuration = 3 * time.Second
 type pollMsg []collector.Session
 type animMsg struct{}
 
+type SessionSource interface {
+	Collect() collector.Collection
+}
+
 type Model struct {
-	root     string
+	source   SessionSource
 	player   *sound.Player
-	scanner  *collector.Scanner
 	interval time.Duration
 	sessions []collector.Session
 	doneAt   map[string]time.Time // session/subagent ID -> when it first became done
@@ -35,11 +38,10 @@ type Model struct {
 	seeded   bool
 }
 
-func New(root string, player *sound.Player, interval time.Duration) Model {
+func New(source SessionSource, player *sound.Player, interval time.Duration) Model {
 	return Model{
-		root:     root,
+		source:   source,
 		player:   player,
-		scanner:  collector.NewScanner(),
 		interval: interval,
 		soundOn:  true,
 		doneAt:   map[string]time.Time{},
@@ -53,8 +55,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) pollCmd() tea.Cmd {
 	return func() tea.Msg {
-		sessions, _ := collector.Collect(m.root, m.scanner)
-		return pollMsg(sessions)
+		return pollMsg(m.source.Collect().Sessions)
 	}
 }
 
