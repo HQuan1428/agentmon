@@ -46,46 +46,54 @@ func (scanner *AiderHistoryScanner) Scan(inputPath, chatPath string, attributed 
 		delete(scanner.states, key)
 		return AiderHistorySnapshot{}
 	}
+	inputInfo, inputErr := os.Stat(inputPath)
+	chatInfo, chatErr := os.Stat(chatPath)
+	if inputErr != nil || chatErr != nil {
+		delete(scanner.states, key)
+		return AiderHistorySnapshot{}
+	}
 
 	state := scanner.states[key]
 	if state == nil {
 		state = &aiderHistoryState{}
 		scanner.states[key] = state
 	}
-	if aiderHistoryChanged(inputPath, state.input) || aiderHistoryChanged(chatPath, state.chat) {
+	if aiderHistoryChanged(inputInfo, state.input) || aiderHistoryChanged(chatInfo, state.chat) {
 		*state = aiderHistoryState{}
 	}
-	inputInfo, inputErr := os.Stat(inputPath)
-	chatInfo, chatErr := os.Stat(chatPath)
-	if inputErr == nil && chatErr == nil && chatInfo.ModTime().After(inputInfo.ModTime()) {
-		state.scanInput(inputPath)
-		state.scanChat(chatPath)
+	var ok bool
+	if chatInfo.ModTime().After(inputInfo.ModTime()) {
+		ok = state.scanInput(inputPath) && state.scanChat(chatPath)
 	} else {
-		state.scanChat(chatPath)
-		state.scanInput(inputPath)
+		ok = state.scanChat(chatPath) && state.scanInput(inputPath)
+	}
+	if !ok {
+		delete(scanner.states, key)
+		return AiderHistorySnapshot{}
 	}
 	return state.snapshot
 }
 
-func aiderHistoryChanged(path string, tail aiderHistoryTail) bool {
+func aiderHistoryChanged(info os.FileInfo, tail aiderHistoryTail) bool {
 	if tail.fileInfo == nil {
 		return false
 	}
-	info, err := os.Stat(path)
-	return err == nil && (info.Size() < tail.offset || !os.SameFile(tail.fileInfo, info))
+	return info.Size() < tail.offset || !os.SameFile(tail.fileInfo, info)
 }
 
-func (state *aiderHistoryState) scanInput(path string) {
+func (state *aiderHistoryState) scanInput(path string) bool {
 	file, err := os.Open(path)
 	if err != nil {
-		return
+		return false
 	}
 	defer file.Close()
-	if info, err := file.Stat(); err == nil {
-		state.input.fileInfo = info
+	info, err := file.Stat()
+	if err != nil {
+		return false
 	}
+	state.input.fileInfo = info
 	if _, err := file.Seek(state.input.offset, io.SeekStart); err != nil {
-		return
+		return false
 	}
 
 	reader := bufio.NewReader(file)
@@ -95,7 +103,7 @@ func (state *aiderHistoryState) scanInput(path string) {
 	for {
 		raw, err := reader.ReadString('\n')
 		if err != nil {
-			return
+			return err == io.EOF
 		}
 		entryBytes += int64(len(raw))
 		line := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
@@ -138,31 +146,33 @@ func aiderSlashStartsTurn(fields []string) bool {
 		return true
 	}
 	switch fields[0] {
-	case "/ask", "/code", "/architect", "/context", "/help":
+	case "/ask", "/code", "/architect":
 		return len(fields) > 1
 	default:
 		return false
 	}
 }
 
-func (state *aiderHistoryState) scanChat(path string) {
+func (state *aiderHistoryState) scanChat(path string) bool {
 	file, err := os.Open(path)
 	if err != nil {
-		return
+		return false
 	}
 	defer file.Close()
-	if info, err := file.Stat(); err == nil {
-		state.chat.fileInfo = info
+	info, err := file.Stat()
+	if err != nil {
+		return false
 	}
+	state.chat.fileInfo = info
 	if _, err := file.Seek(state.chat.offset, io.SeekStart); err != nil {
-		return
+		return false
 	}
 
 	reader := bufio.NewReader(file)
 	for {
 		raw, err := reader.ReadString('\n')
 		if err != nil {
-			return
+			return err == io.EOF
 		}
 		state.chat.offset += int64(len(raw))
 		if strings.TrimSpace(raw) == "#### assistant" && state.snapshot.Busy {

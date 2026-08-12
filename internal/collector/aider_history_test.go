@@ -107,6 +107,18 @@ func TestAiderHistoryOpensTurnForPromptBearingChatCommand(t *testing.T) {
 	}
 }
 
+func TestAiderHistoryIgnoresArgumentBearingLocalCommands(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.history")
+	chat := filepath.Join(dir, "chat.md")
+	writeFile(t, input, "# now\n+/help explain config\n\n# now\n+/context src/main.go\n\n")
+	writeFile(t, chat, "")
+
+	if got := NewAiderHistoryScanner().Scan(input, chat, true); got.Busy || got.Done {
+		t.Fatalf("local commands=%+v", got)
+	}
+}
+
 func TestAiderHistoryResetsWhenInputHistoryRotates(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input.history")
@@ -145,6 +157,39 @@ func TestAiderHistoryResetsWhenInputHistoryTruncates(t *testing.T) {
 	}
 	if got := scanner.Scan(input, chat, true); got.Busy || got.Done || got.RuntimeModel != "" {
 		t.Fatalf("after truncate=%+v", got)
+	}
+}
+
+func TestAiderHistoryFailsClosedWhenRequiredHistoryDisappears(t *testing.T) {
+	for _, missing := range []string{"input", "chat"} {
+		t.Run(missing, func(t *testing.T) {
+			dir := t.TempDir()
+			input := filepath.Join(dir, "input.history")
+			chat := filepath.Join(dir, "chat.md")
+			writeFile(t, input, "# old\n+/model old-model\n\n# old\n+old request\n\n")
+			writeFile(t, chat, "")
+
+			scanner := NewAiderHistoryScanner()
+			if got := scanner.Scan(input, chat, true); !got.Busy || got.RuntimeModel != "old-model" {
+				t.Fatalf("initial snapshot=%+v", got)
+			}
+			path := input
+			if missing == "chat" {
+				path = chat
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if got := scanner.Scan(input, chat, true); got != (AiderHistorySnapshot{}) {
+				t.Fatalf("missing history snapshot=%+v", got)
+			}
+
+			writeFile(t, input, "# new\n+/model new-model\n\n# new\n+new request\n\n")
+			writeFile(t, chat, "")
+			if got := scanner.Scan(input, chat, true); !got.Busy || got.Done || got.RuntimeModel != "new-model" {
+				t.Fatalf("recreated history snapshot=%+v", got)
+			}
+		})
 	}
 }
 
