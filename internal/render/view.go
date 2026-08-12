@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"agentmon/internal/collector"
 )
@@ -46,22 +47,24 @@ var (
 func BodyLines(sessions []collector.Session, phase int, dim map[string]bool, totalWidth int) []string {
 	var lines []string
 	layout := LayoutForWidth(totalWidth)
+	cw := contentWidth(totalWidth)
 	curProject := ""
 	curAgent := collector.Agent("")
 	for _, s := range sessions {
 		if s.Project != curProject {
-			lines = append(lines, projectHeadStyle.Render("▾ "+s.Project))
+			lines = append(lines, projectHeadStyle.Render(truncate("▾ "+s.Project, cw)))
 			curProject = s.Project
 			curAgent = ""
 		}
 		if s.Agent != curAgent {
-			lines = append(lines, projectHeadStyle.Render("  ▾ "+string(s.Agent)))
+			lines = append(lines, projectHeadStyle.Render(truncate("  ▾ "+string(s.Agent), cw)))
 			curAgent = s.Agent
 		}
 		faint := dim[s.ID]
 		lines = append(lines, dimIf(sessionRow(s, phase, !faint, layout), faint))
 		if s.Blocked && s.NeedsHint != "" {
-			lines = append(lines, needsStyle.Render("        needs: "+truncate(s.NeedsHint, 56)))
+			needs := "        needs: " + truncate(s.NeedsHint, 56)
+			lines = append(lines, needsStyle.Render(truncate(needs, cw)))
 		}
 		for i, c := range s.Children {
 			branch := "├─"
@@ -83,7 +86,7 @@ const (
 // prefix + name, truncating the name to whatever room the prefix leaves so the
 // PROGRESS column always starts at the same offset.
 func nameCell(prefix, name string, width int) string {
-	avail := width - len([]rune(prefix))
+	avail := width - lipgloss.Width(prefix)
 	if avail < 1 {
 		avail = 1
 	}
@@ -101,6 +104,9 @@ func sessionRow(s collector.Session, phase int, colored bool, layout Layout) str
 	if colored {
 		name = strings.Replace(name, "▸", markerStyle.Render("▸"), 1)
 	}
+	if layout.Compact {
+		return name
+	}
 	status := statusText(s)
 	if colored {
 		status = statusStyle(s).Render(status)
@@ -111,6 +117,9 @@ func sessionRow(s collector.Session, phase int, colored bool, layout Layout) str
 // childRow builds a subagent row, indented under its session, in soft gray.
 func childRow(branch string, c collector.Session, phase int, layout Layout) string {
 	name := nameCell(childIndent+branch+" ⌁ ", c.Name, layout.SessionW)
+	if layout.Compact {
+		return treeGrayStyle.Render(name)
+	}
 	line := name + blankModelCell(layout) + progressCell(c, phase, layout) + padRight(tasksText(c), layout.TasksW) + " " + statusText(c)
 	return treeGrayStyle.Render(line)
 }
@@ -186,23 +195,17 @@ func dimIf(s string, d bool) string {
 	return s
 }
 
-// padRight pads s with spaces to n visible runes (or truncates), ANSI-free
+// padRight pads s with spaces to n terminal cells (or truncates), ANSI-free
 // inputs only — callers pass plain text for padded columns.
 func padRight(s string, n int) string {
-	w := len([]rune(s))
-	if w >= n {
-		return s
-	}
+	s = truncate(s, n)
+	w := lipgloss.Width(s)
 	return s + strings.Repeat(" ", n-w)
 }
 
 func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	if n <= 0 {
+		return ""
 	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
 }

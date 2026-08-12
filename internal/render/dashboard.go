@@ -154,11 +154,13 @@ func bellBadge(on bool) string {
 
 func columnHeader(cw int, layout Layout) string {
 	labels := padRight("PROJECT / AGENT / SESSION", layout.SessionW)
-	if !layout.Compact {
+	if layout.Compact {
+		labels = truncate(labels, cw)
+	} else {
 		labels += padRight("MODEL", layout.ModelW)
+		labels += padRight("PROGRESS", layout.BarW+4) +
+			padRight("TASKS", layout.TasksW) + " STATUS"
 	}
-	labels += padRight("PROGRESS", layout.BarW+4) +
-		padRight("TASKS", layout.TasksW) + " STATUS"
 	rule := ruleStyle.Render(strings.Repeat("─", cw))
 	return colHeadStyle.Render(labels) + "\n" + rule
 }

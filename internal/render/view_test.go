@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"agentmon/internal/collector"
 )
 
@@ -89,6 +91,48 @@ func TestLayoutForWidthAndCompactModel(t *testing.T) {
 	if strings.Contains(out, "gpt-5.6-sol") {
 		t.Fatalf("compact body should hide model:\n%s", out)
 	}
+}
+
+func TestBodyLinesUnicodeColumnsAndCompactWidth(t *testing.T) {
+	sessions := []collector.Session{
+		{ID: "codex:ascii", Agent: collector.AgentCodex, Model: "model-a", Name: "ascii", Project: "proj", Status: "busy", Mode: collector.Indeterminate},
+		{ID: "codex:cjk", Agent: collector.AgentCodex, Model: "模型-v2", Name: "会議修正", Project: "proj", Status: "busy", Mode: collector.Indeterminate},
+		{ID: "codex:emoji", Agent: collector.AgentCodex, Model: "🧠-v3", Name: "🧑‍💻 review", Project: "proj", Status: "busy", Mode: collector.Indeterminate},
+	}
+	layout := LayoutForWidth(120)
+	out := stripANSI(strings.Join(BodyLines(sessions, 0, nil, 120), "\n"))
+	for _, model := range []string{"model-a", "模型-v2", "🧠-v3"} {
+		line := lineContaining(out, model)
+		if got := cellStart(line, model); got != layout.SessionW {
+			t.Errorf("model %q starts at cell %d, want %d:\n%s", model, got, layout.SessionW, line)
+		}
+		if got := cellStart(line, "["); got != layout.SessionW+layout.ModelW {
+			t.Errorf("progress after %q starts at cell %d, want %d:\n%s", model, got, layout.SessionW+layout.ModelW, line)
+		}
+	}
+
+	compactWidth := 80
+	compactSessions := []collector.Session{{
+		ID: "claude:long", Agent: collector.AgentClaude, Name: strings.Repeat("🧑‍💻", 30), Project: strings.Repeat("專案", 30),
+		Model: "模型", Status: "busy", Mode: collector.Indeterminate, Blocked: true, NeedsHint: strings.Repeat("需要核准", 30),
+	}}
+	for _, line := range BodyLines(compactSessions, 0, nil, compactWidth) {
+		if got, max := lipgloss.Width(stripANSI(line)), contentWidth(compactWidth); got > max {
+			t.Errorf("compact line width=%d exceeds content width=%d:\n%s", got, max, stripANSI(line))
+		}
+	}
+	header := lineContaining(stripANSI(columnHeader(contentWidth(compactWidth), LayoutForWidth(compactWidth))), "PROJECT")
+	if got, max := lipgloss.Width(header), contentWidth(compactWidth); got > max {
+		t.Errorf("compact header width=%d exceeds content width=%d:\n%s", got, max, header)
+	}
+}
+
+func cellStart(line, needle string) int {
+	i := strings.Index(line, needle)
+	if i < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:i])
 }
 
 func lineContaining(text, needle string) string {
