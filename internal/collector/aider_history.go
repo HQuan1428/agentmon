@@ -180,7 +180,7 @@ func (state *aiderHistoryState) scanChat(path string) bool {
 		state.chat.offset += int64(len(raw))
 		line := strings.TrimSpace(raw)
 		switch {
-		case strings.HasPrefix(line, "#### ") && strings.TrimSpace(strings.TrimPrefix(line, "#### ")) != "":
+		case state.snapshot.Busy && strings.HasPrefix(line, "#### ") && strings.TrimSpace(strings.TrimPrefix(line, "#### ")) != "":
 			state.chatPromptOpen = true
 			state.chatPromptEnded = false
 			state.chatResponseSeen = false

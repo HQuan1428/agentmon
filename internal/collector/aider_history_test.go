@@ -127,6 +127,26 @@ func TestAiderHistoryIgnoresArgumentBearingLocalCommands(t *testing.T) {
 	}
 }
 
+func TestAiderHistoryChatHeadingsForLocalCommandsDoNotOpenTurn(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.history")
+	chat := filepath.Join(dir, "chat.md")
+	writeFile(t, input, "# now\n+/model sonnet\n\n# now\n+/help explain config\n\n")
+	writeFile(t, chat, "#### /model sonnet\n\n#### /help explain config\n\n")
+	old := time.Unix(1, 0)
+	newer := time.Unix(2, 0)
+	if err := os.Chtimes(input, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(chat, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := NewAiderHistoryScanner().Scan(input, chat, true); got.Busy || got.Done || got.RuntimeModel != "sonnet" {
+		t.Fatalf("local command chat headings=%+v", got)
+	}
+}
+
 func TestAiderHistoryResetsWhenInputHistoryRotates(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "input.history")
