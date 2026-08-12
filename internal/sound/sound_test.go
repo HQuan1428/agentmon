@@ -1,8 +1,55 @@
 package sound
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 const sr = 44100
+
+// TestPlayOneReturnsWithoutHanging guards the root cause of the "no alert
+// sound" bug: with the server's default ~2s buffer, a 0.29s clip underflows
+// before PulseAudio sends Started, so PlaybackStream.Start() blocks forever
+// on <-p.started and the worker goroutine hangs on the first chime. The fix
+// (a small PlaybackLatency so Started fires before underflow) must let one
+// chime play and return promptly. Skips where no PulseAudio server exists.
+func TestPlayOneReturnsWithoutHanging(t *testing.T) {
+	p := NewPlayer()
+	if !p.Enabled() {
+		t.Skip("no PulseAudio server reachable; skipping playback integration test")
+	}
+	done := make(chan struct{})
+	go func() {
+		p.playOne(p.pcm[ChimeDone])
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("playOne hung: Start()/Drain() did not return within 3s")
+	}
+}
+
+// TestPlaysMultipleChimesConsecutively verifies that several completions in a
+// row each play through — the desired "one chime per finished agent" behavior.
+func TestPlaysMultipleChimesConsecutively(t *testing.T) {
+	p := NewPlayer()
+	if !p.Enabled() {
+		t.Skip("no PulseAudio server reachable; skipping playback integration test")
+	}
+	done := make(chan struct{})
+	go func() {
+		p.playOne(p.pcm[ChimeDone])
+		p.playOne(p.pcm[ChimeApproval])
+		p.playOne(p.pcm[ChimeDone])
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("consecutive chimes did not all complete within 6s")
+	}
+}
 
 func TestSynthLengthAndBounds(t *testing.T) {
 	pcm := Synth(ChimeDone, sr)

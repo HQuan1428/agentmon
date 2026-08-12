@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"log"
 	"math"
-	"time"
 
 	"github.com/jfreymuth/pulse"
 	"github.com/jfreymuth/pulse/proto"
@@ -128,24 +127,22 @@ func (p *Player) playOne(data []byte) {
 		}
 		return len(out), nil
 	})
+	// PlaybackLatency keeps the server-side buffer small (~0.1s). Without it
+	// the server picks a ~2s buffer, so this ~0.29s clip underflows before
+	// PulseAudio sends Started — and Start() blocks forever on <-p.started
+	// (see client.go: Started is only signalled when !underflow). That hang
+	// froze the worker on the first chime, so no alert was ever heard.
 	stream, err := p.client.NewPlayback(reader,
 		pulse.PlaybackSampleRate(sampleRate),
-		pulse.PlaybackChannels(proto.ChannelMap{proto.ChannelMono}))
+		pulse.PlaybackChannels(proto.ChannelMap{proto.ChannelMono}),
+		pulse.PlaybackLatency(0.1))
 	if err != nil {
 		return
 	}
 	stream.Start()
-	// Sleep the known clip length instead of Drain(): Drain() can block
-	// indefinitely on some PulseAudio sinks (observed hanging on WSLg's RDP
-	// sink). The clip is a fixed length, so a timed wait plus a small margin
-	// lets the tail play out, then we stop.
-	time.Sleep(clipDuration() + 80*time.Millisecond)
-	stream.Stop()
+	// Drain waits for the audio to finish playing before we close the stream,
+	// so the tail isn't truncated. With the small buffer above it returns
+	// promptly (it only hung earlier as a side effect of the Start() hang).
+	stream.Drain()
 	stream.Close()
-}
-
-// clipDuration is the wall-clock length of one motif: two notes + one gap.
-func clipDuration() time.Duration {
-	secs := 2*noteDur + gapDur
-	return time.Duration(secs * float64(time.Second))
 }
