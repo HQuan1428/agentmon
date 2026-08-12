@@ -10,11 +10,9 @@ import (
 )
 
 const (
-	barW         = 15 // progress bar width in cells (inside the [ ] brackets)
-	sessionColW  = 30 // "PROJECT / SESSION" column
-	tasksColW    = 8  // "TASKS" column
-	nameMax      = 24 // session name truncation
-	childNameMax = 18 // subagent name truncation
+	barW        = 15 // progress bar width in cells (inside the [ ] brackets)
+	sessionColW = 30 // "PROJECT / SESSION" column
+	tasksColW   = 8  // "TASKS" column
 )
 
 // Row/column styling. In a non-TTY (tests, pipes) lipgloss strips colors,
@@ -59,13 +57,30 @@ func BodyLines(sessions []collector.Session, phase int, dim map[string]bool) []s
 	return lines
 }
 
-// sessionRow builds one top-level row: ▸ name | [bar] | tasks | status.
+const (
+	sessionIndent = "  "     // sessions sit one level under their ▾ project
+	childIndent   = "      " // subagents sit one level under their ▸ session
+)
+
+// nameCell builds the left "PROJECT / SESSION" cell: a fixed-width column of
+// prefix + name, truncating the name to whatever room the prefix leaves so the
+// PROGRESS column always starts at the same offset.
+func nameCell(prefix, name string) string {
+	avail := sessionColW - len([]rune(prefix))
+	if avail < 1 {
+		avail = 1
+	}
+	return padRight(prefix+truncate(name, avail), sessionColW)
+}
+
+// sessionRow builds one session row, indented under its project:
+// ▸ name | [bar] | tasks | status.
 func sessionRow(s collector.Session, phase int, colored bool) string {
-	label := truncate(s.Name, nameMax)
+	label := s.Name
 	if s.Kind == "bg" {
 		label += " (bg)"
 	}
-	name := padRight("▸ "+label, sessionColW)
+	name := nameCell(sessionIndent+"▸ ", label)
 	if colored {
 		name = strings.Replace(name, "▸", markerStyle.Render("▸"), 1)
 	}
@@ -76,9 +91,9 @@ func sessionRow(s collector.Session, phase int, colored bool) string {
 	return name + bracketBar(s, phase) + "  " + padRight(tasksText(s), tasksColW) + " " + status
 }
 
-// childRow builds a subagent row, drawn entirely in soft gray.
+// childRow builds a subagent row, indented under its session, in soft gray.
 func childRow(branch string, c collector.Session, phase int) string {
-	name := padRight("    "+branch+" ⌁ "+truncate(c.Name, childNameMax), sessionColW)
+	name := nameCell(childIndent+branch+" ⌁ ", c.Name)
 	line := name + bracketBar(c, phase) + "  " + padRight(tasksText(c), tasksColW) + " " + statusText(c)
 	return treeGrayStyle.Render(line)
 }
