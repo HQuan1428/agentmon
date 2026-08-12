@@ -7,7 +7,7 @@ import (
 	"agentmon/internal/collector"
 )
 
-func TestBodyLinesFlatSessionsAndTree(t *testing.T) {
+func TestBodyLinesGroupedSessionsAndTree(t *testing.T) {
 	sessions := []collector.Session{
 		{ID: "w", Name: "improve-finbert", Project: "proj", Kind: "interactive", Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy",
 			Children: []collector.Session{
@@ -18,7 +18,8 @@ func TestBodyLinesFlatSessionsAndTree(t *testing.T) {
 	out := strings.Join(BodyLines(sessions, 0, nil), "\n")
 
 	for _, want := range []string{
-		"▸ improve-finbert",  // flat ▸ session marker
+		"▾ proj",             // project group header
+		"▸ improve-finbert",  // session marker
 		"└─ ⌁ task-6-review", // subagent branch + icon
 		"[", "]",             // bracketed bar
 		"6/10", "41/41", "DONE", // TASKS column (uppercase DONE)
@@ -28,9 +29,6 @@ func TestBodyLinesFlatSessionsAndTree(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("body missing %q:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "▸ proj") {
-		t.Errorf("flat list should not render a project-group header:\n%s", out)
 	}
 }
 

@@ -21,22 +21,28 @@ const (
 // leaving plain text — so structural assertions still see the labels. The
 // done-fade dim is applied as raw ANSI (see dimIf) so it survives regardless.
 var (
-	markerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")) // ▸ session marker
-	treeGrayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))           // subagent rows
-	needsStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true)
-	statusBusy    = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true) // ⚡ BUSY
-	statusSweep   = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
-	statusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)  // ✓ DONE
-	statusBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true) // ⏸ BLOCKED
+	projectHeadStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // ▾ project group
+	markerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // ▸ session marker
+	treeGrayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // subagent rows
+	needsStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true)
+	statusBusy       = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true) // ⚡ BUSY
+	statusSweep      = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
+	statusDone       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)  // ✓ DONE
+	statusBlocked    = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true) // ⏸ BLOCKED
 )
 
 // BodyLines renders the session table as individual lines (no column header,
-// no border — the frame adds those). It is a flat list: each session is a
-// ▸ row, its subagents nested beneath with ├─/└─ ⌁ branches. IDs in dim are
-// drawn faint.
+// no border — the frame adds those). Sessions are grouped under a ▾ project
+// header (they arrive sorted by project); each session is a ▸ row with its
+// subagents nested beneath as ├─/└─ ⌁ branches. IDs in dim are drawn faint.
 func BodyLines(sessions []collector.Session, phase int, dim map[string]bool) []string {
 	var lines []string
+	curProject := ""
 	for _, s := range sessions {
+		if s.Project != curProject {
+			lines = append(lines, projectHeadStyle.Render("▾ "+s.Project))
+			curProject = s.Project
+		}
 		faint := dim[s.ID]
 		lines = append(lines, dimIf(sessionRow(s, phase, !faint), faint))
 		if s.Blocked && s.NeedsHint != "" {
