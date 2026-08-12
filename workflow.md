@@ -45,6 +45,29 @@ Cần công cụ riêng cho dự án (design sync, security review, đọc code 
 
 **DoD:** mọi task trong plan có bằng chứng — test pass + review pass. "Tôi kiểm tra rồi" không phải bằng chứng.
 
+### 2b. Chọn INLINE hay SUBAGENT-DRIVEN cho bước thực thi (mục 2.4)
+
+Bước 4 (thực thi) có hai cách. Cả hai **bắt buộc giữ TDD + bằng chứng**; cái được phép bỏ ở inline chỉ là *giấy tờ khung* (brief/ledger/report), **không bao giờ** bỏ test và review.
+
+**Dùng INLINE** (tự viết, TDD, không dispatch subagent per-task) khi:
+
+- Cấp 0/1, hoặc feature nhỏ–vừa, blast radius hẹp, không nhạy cảm.
+- Đang rành code (context sạch, vừa viết) — subagent lạnh chỉ tổ chậm/lệch.
+- Session còn ngắn, chưa gần compact.
+- Logic tự kiểm bằng test được.
+
+→ Inline **PHẢI** kèm **1 lần `requesting-code-review` trên diff trước merge** để có con mắt thứ 2 (bù cho việc không có review 2 tầng per-task).
+
+**Dùng SUBAGENT-DRIVEN đầy đủ** (`subagent-driven-development`/`executing-plans`) khi ≥1 điều kiện:
+
+- Code nhạy cảm: tiền, auth, security, data-loss, migration → review độc lập bắt buộc.
+- Nhiều task độc lập chạy nối tiếp → fresh context + review từng task phát huy.
+- Feature lớn/nhiều module, blast radius rộng, dễ lọt lỗi tinh vi.
+- Session dài/sắp compact → **ledger** cứu khỏi re-dispatch nhầm.
+- Việc mơ hồ, dễ trôi ý định → plan cứng per-task chặn drift.
+
+Ranh giới 10 giây: *nhạy cảm? nhiều task nối tiếp? session sắp compact?* → **subagent-driven**. Còn lại (nhỏ–vừa, rành code, ngắn) → **inline + 1 lần code-review trước merge**.
+
 ---
 
 ## 3. Mở rộng theo dự án — skill/plugin/MCP phụ
