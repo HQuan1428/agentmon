@@ -37,6 +37,16 @@ func TestScannerCapturesModelFromCompleteLines(t *testing.T) {
 	}
 }
 
+func TestScannerIgnoresWhitespaceOnlyAssistantModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.jsonl")
+	writeFile(t, path, modelLine("claude-opus-4-6")+"\n"+
+		`{"type":"assistant","message":{"role":"assistant","model":" \t ","content":[]}}`+"\n")
+
+	if got := NewScanner().Scan(path); got.Model != "claude-opus-4-6" {
+		t.Fatalf("model after whitespace-only update=%q", got.Model)
+	}
+}
+
 func TestParseTodosLastWins(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.jsonl")

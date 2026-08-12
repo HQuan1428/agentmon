@@ -200,8 +200,8 @@ func (st *scanState) apply(raw []byte) {
 	if json.Unmarshal(raw, &line) != nil {
 		return
 	}
-	if line.Type == "assistant" && line.Message.Role == "assistant" && line.Message.Model != "" {
-		st.model = line.Message.Model
+	if model := strings.TrimSpace(line.Message.Model); line.Type == "assistant" && line.Message.Role == "assistant" && model != "" {
+		st.model = model
 	}
 	for _, c := range line.Message.Content {
 		switch {
