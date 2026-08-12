@@ -53,12 +53,19 @@ func BodyLines(sessions []collector.Session, phase int, dim map[string]bool, tot
 	curProject := ""
 	curAgent := collector.Agent("")
 	for _, s := range sessions {
-		if s.Project != curProject {
+		newProject := s.Project != curProject
+		if newProject {
+			if len(lines) > 0 {
+				lines = append(lines, "") // gap before each project group
+			}
 			lines = append(lines, projectHeadStyle.Render(truncate("▾ "+s.Project, cw)))
 			curProject = s.Project
 			curAgent = ""
 		}
 		if s.Agent != curAgent {
+			if !newProject && len(lines) > 0 {
+				lines = append(lines, "") // gap before an agent group within a project
+			}
 			lines = append(lines, projectHeadStyle.Render(truncate("  ▾ "+string(s.Agent), cw)))
 			curAgent = s.Agent
 		}

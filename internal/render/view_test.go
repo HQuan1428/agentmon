@@ -34,6 +34,26 @@ func TestBodyLinesGroupedSessionsAndTree(t *testing.T) {
 	}
 }
 
+func TestBodyLinesGroupGaps(t *testing.T) {
+	sessions := []collector.Session{
+		{ID: "a", Agent: collector.AgentClaude, Name: "s1", Project: "p1", Status: "busy", Mode: collector.Indeterminate},
+		{ID: "b", Agent: collector.AgentClaude, Name: "s2", Project: "p2", Status: "busy", Mode: collector.Indeterminate},
+	}
+	lines := BodyLines(sessions, 0, nil, 120)
+	if strings.TrimSpace(stripANSI(lines[0])) == "" {
+		t.Fatalf("first line should not be blank: %q", lines)
+	}
+	blank := 0
+	for _, l := range lines {
+		if strings.TrimSpace(stripANSI(l)) == "" {
+			blank++
+		}
+	}
+	if blank != 1 {
+		t.Fatalf("want one blank line between the two projects, got %d:\n%q", blank, lines)
+	}
+}
+
 func TestBodyLinesDimsDoneRow(t *testing.T) {
 	sessions := []collector.Session{
 		{ID: "x", Name: "done-one", Project: "proj", Mode: collector.Indeterminate, Status: "idle"},
