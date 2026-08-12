@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,62 @@ func TestLoopbackOpenCodeProbeDoesNotFollowRedirects(t *testing.T) {
 	statuses, err := probe.Statuses(context.Background(), []procscan.Listener{{Network: "tcp", Address: "127.0.0.1", Port: port}})
 	if err == nil || statuses != nil || redirected != 0 {
 		t.Fatalf("statuses=%v err=%v redirected=%d", statuses, err, redirected)
+	}
+}
+
+func TestLoopbackOpenCodeProbeRejectsNonTCPListeners(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"ses_parent":{"type":"busy"}}`))
+	}))
+	t.Cleanup(server.Close)
+	_, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portText)
+
+	probe := LoopbackOpenCodeProbe{Client: &http.Client{Timeout: 150 * time.Millisecond}}
+	statuses, err := probe.Statuses(context.Background(), []procscan.Listener{{Network: "udp", Address: "127.0.0.1", Port: port}})
+	if err == nil || statuses != nil || requests != 0 {
+		t.Fatalf("statuses=%v err=%v requests=%d", statuses, err, requests)
+	}
+}
+
+func TestLoopbackOpenCodeProbeRejectsOversizedBodies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ses_parent":{"type":"busy"}}` + strings.Repeat(" ", 1<<20)))
+	}))
+	t.Cleanup(server.Close)
+	_, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portText)
+
+	probe := LoopbackOpenCodeProbe{Client: &http.Client{Timeout: 150 * time.Millisecond}}
+	statuses, err := probe.Statuses(context.Background(), []procscan.Listener{{Network: "tcp", Address: "127.0.0.1", Port: port}})
+	if err == nil || statuses != nil {
+		t.Fatalf("statuses=%v err=%v", statuses, err)
+	}
+}
+
+func TestLoopbackOpenCodeProbeIgnoresUnknownStatuses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ses_parent":{"type":"busy"},"ses_unknown":{"type":"retry"}}`))
+	}))
+	t.Cleanup(server.Close)
+	_, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(portText)
+
+	probe := LoopbackOpenCodeProbe{Client: &http.Client{Timeout: 150 * time.Millisecond}}
+	statuses, err := probe.Statuses(context.Background(), []procscan.Listener{{Network: "tcp", Address: "127.0.0.1", Port: port}})
+	if err != nil || !reflect.DeepEqual(statuses, map[string]string{"ses_parent": "busy"}) {
+		t.Fatalf("statuses=%v err=%v", statuses, err)
 	}
 }
 
@@ -187,10 +244,84 @@ func TestOpenCodeAdapterRetainsTerminalRowsForFourSeconds(t *testing.T) {
 	}
 }
 
+func TestOpenCodeAdapterRejectsUnrelatedNodeWrapper(t *testing.T) {
+	known := procscan.Process{Comm: "node", Exe: "/usr/bin/node", Args: []string{"node", "/opt/node_modules/opencode-ai/bin/opencode"}}
+	unrelated := procscan.Process{Comm: "node", Exe: "/usr/bin/node", Args: []string{"node", "/opt/tools/opencode/bin/opencode"}}
+	if !isOpenCodeProcess(known) || isOpenCodeProcess(unrelated) {
+		t.Fatalf("known=%t unrelated=%t", isOpenCodeProcess(known), isOpenCodeProcess(unrelated))
+	}
+}
+
+func TestOpenCodeAdapterOmitsAmbiguousFallbackRows(t *testing.T) {
+	store := &fakeOpenCodeStore{candidates: []OpenCodeRecord{{ID: "ses_shared", Directory: "/work/p", Busy: true}}}
+	adapter := NewOpenCodeAdapter(t.TempDir())
+	adapter.probe = fakeOpenCodeProbe{}
+	adapter.storeFor = func(string) OpenCodeStore { return store }
+	rows, err := adapter.Discover(procscan.Snapshot{Processes: []procscan.Process{
+		{PID: 42, StartTicks: 100, Comm: "opencode", Cwd: "/work/p"},
+		{PID: 43, StartTicks: 200, Comm: "opencode", Cwd: "/work/p"},
+	}})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestOpenCodeAdapterUsesSQLiteForUnknownAPIStatus(t *testing.T) {
+	store := &fakeOpenCodeStore{candidates: []OpenCodeRecord{{ID: "ses_retry", Directory: "/work/p"}}}
+	adapter := NewOpenCodeAdapter(t.TempDir())
+	adapter.probe = staticOpenCodeProbe{"ses_retry": "retry"}
+	adapter.storeFor = func(string) OpenCodeStore { return store }
+	rows, err := adapter.Discover(procscan.Snapshot{Processes: []procscan.Process{{
+		PID: 42, StartTicks: 100, Comm: "opencode", Cwd: "/work/p",
+		Listeners: []procscan.Listener{{Network: "tcp", Address: "127.0.0.1", Port: 1}},
+	}}})
+	if err != nil || len(rows) != 1 || rows[0].Status != "idle" {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestOpenCodeAdapterClearsOrphanChildModel(t *testing.T) {
+	store := &fakeOpenCodeStore{candidates: []OpenCodeRecord{{
+		ID: "ses_child", ParentID: "ses_missing", Title: "Child", Directory: "/work/p",
+		ProviderID: "openai", ModelID: "gpt-5.6-sol", Busy: true,
+	}}}
+	adapter := NewOpenCodeAdapter(t.TempDir())
+	adapter.probe = fakeOpenCodeProbe{}
+	adapter.storeFor = func(string) OpenCodeStore { return store }
+	rows, err := adapter.Discover(procscan.Snapshot{Processes: []procscan.Process{{PID: 42, Comm: "opencode", Cwd: "/work/p"}}})
+	if err != nil || len(rows) != 1 || rows[0].Model != "" {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestOpenCodeAdapterNameFallsBackToSlugThenID(t *testing.T) {
+	store := &fakeOpenCodeStore{candidates: []OpenCodeRecord{
+		{ID: "ses_slug", Slug: "useful-slug", Directory: "/work/p", Busy: true},
+		{ID: "ses_id", Directory: "/work/p", Busy: true},
+	}}
+	adapter := NewOpenCodeAdapter(t.TempDir())
+	adapter.probe = fakeOpenCodeProbe{}
+	adapter.storeFor = func(string) OpenCodeStore { return store }
+	rows, err := adapter.Discover(procscan.Snapshot{Processes: []procscan.Process{{PID: 42, Comm: "opencode", Cwd: "/work/p"}}})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	names := map[string]string{rows[0].NativeID: rows[0].Name, rows[1].NativeID: rows[1].Name}
+	if names["ses_slug"] != "useful-slug" || names["ses_id"] != "ses_id" {
+		t.Fatalf("names=%v", names)
+	}
+}
+
 type fakeOpenCodeProbe struct{}
 
 func (fakeOpenCodeProbe) Statuses(context.Context, []procscan.Listener) (map[string]string, error) {
 	return nil, nil
+}
+
+type staticOpenCodeProbe map[string]string
+
+func (p staticOpenCodeProbe) Statuses(context.Context, []procscan.Listener) (map[string]string, error) {
+	return p, nil
 }
 
 type fakeOpenCodeStore struct {

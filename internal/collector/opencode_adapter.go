@@ -20,6 +20,7 @@ import (
 const (
 	openCodeTimeout        = 150 * time.Millisecond
 	openCodeRecentDuration = 4 * time.Second
+	openCodeBodyLimit      = 1 << 20
 )
 
 type OpenCodeStatusProbe interface {
@@ -37,6 +38,9 @@ func (p *LoopbackOpenCodeProbe) Statuses(ctx context.Context, listeners []procsc
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	for _, listener := range listeners {
+		if listener.Network != "tcp" && listener.Network != "tcp6" {
+			continue
+		}
 		address, err := netip.ParseAddr(listener.Address)
 		if err != nil || !address.Unmap().IsLoopback() || listener.Port < 1 || listener.Port > 65535 {
 			continue
@@ -53,10 +57,10 @@ func (p *LoopbackOpenCodeProbe) Statuses(ctx context.Context, listeners []procsc
 			cancel()
 			continue
 		}
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, openCodeBodyLimit+1))
 		closeErr := response.Body.Close()
 		cancel()
-		if response.StatusCode != http.StatusOK || readErr != nil || closeErr != nil {
+		if response.StatusCode != http.StatusOK || readErr != nil || closeErr != nil || len(body) > openCodeBodyLimit {
 			continue
 		}
 		var payload map[string]struct {
@@ -68,13 +72,15 @@ func (p *LoopbackOpenCodeProbe) Statuses(ctx context.Context, listeners []procsc
 		statuses := make(map[string]string, len(payload))
 		valid := true
 		for id, status := range payload {
-			if strings.TrimSpace(id) == "" || strings.TrimSpace(status.Type) == "" {
+			if strings.TrimSpace(id) == "" {
 				valid = false
 				break
 			}
-			statuses[id] = status.Type
+			if status.Type == "busy" || status.Type == "idle" {
+				statuses[id] = status.Type
+			}
 		}
-		if valid {
+		if valid && len(statuses) > 0 {
 			return statuses, nil
 		}
 	}
@@ -82,11 +88,12 @@ func (p *LoopbackOpenCodeProbe) Statuses(ctx context.Context, listeners []procsc
 }
 
 type OpenCodeAdapter struct {
-	home     string
-	probe    OpenCodeStatusProbe
-	storeFor func(string) OpenCodeStore
-	now      func() time.Time
-	recent   map[string]recentSession
+	home             string
+	probe            OpenCodeStatusProbe
+	storeFor         func(string) OpenCodeStore
+	now              func() time.Time
+	recent           map[string]recentSession
+	recentAttributed map[string]bool
 }
 
 func NewOpenCodeAdapter(home string) *OpenCodeAdapter {
@@ -96,8 +103,9 @@ func NewOpenCodeAdapter(home string) *OpenCodeAdapter {
 		storeFor: func(path string) OpenCodeStore {
 			return NewSQLiteOpenCodeStore(path)
 		},
-		now:    time.Now,
-		recent: map[string]recentSession{},
+		now:              time.Now,
+		recent:           map[string]recentSession{},
+		recentAttributed: map[string]bool{},
 	}
 }
 
@@ -107,16 +115,19 @@ func (a *OpenCodeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error
 	now := a.now()
 	instances := make(map[int]uint64)
 	observed := make(map[string]openCodeObservedSession)
-	matched := false
+	fallbackOwners := make(map[string]int)
+	var processes []procscan.Process
+	for _, process := range snapshot.Processes {
+		if isOpenCodeProcess(process) {
+			processes = append(processes, process)
+			instances[process.PID] = process.StartTicks
+			fallbackOwners[openCodeFallbackKey(a.home, process)]++
+		}
+	}
 	succeeded := false
 	var firstError error
 
-	for _, process := range snapshot.Processes {
-		if !isOpenCodeProcess(process) {
-			continue
-		}
-		matched = true
-		instances[process.PID] = process.StartTicks
+	for _, process := range processes {
 		store := a.storeFor(filepath.Join(openCodeDataRoot(a.home, process), "opencode.db"))
 
 		var statuses map[string]string
@@ -140,24 +151,26 @@ func (a *OpenCodeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error
 				}
 			} else {
 				succeeded = true
-				a.observe(process, records, statuses, observed)
+				a.observe(process, records, statuses, true, observed)
 			}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), openCodeTimeout)
-		records, err := store.Candidates(ctx, []string{process.Cwd}, now.Add(-openCodeRecentDuration).UnixMilli())
-		cancel()
-		if err != nil {
-			if firstError == nil {
-				firstError = err
+		if fallbackOwners[openCodeFallbackKey(a.home, process)] == 1 {
+			ctx, cancel := context.WithTimeout(context.Background(), openCodeTimeout)
+			records, err := store.Candidates(ctx, []string{process.Cwd}, now.Add(-openCodeRecentDuration).UnixMilli())
+			cancel()
+			if err != nil {
+				if firstError == nil {
+					firstError = err
+				}
+			} else {
+				succeeded = true
+				a.observe(process, records, statuses, false, observed)
 			}
-		} else {
-			succeeded = true
-			a.observe(process, records, statuses, observed)
 		}
 	}
 
-	if matched && !succeeded && firstError != nil {
+	if len(processes) > 0 && !succeeded && firstError != nil {
 		return nil, firstError
 	}
 	for nativeID, entry := range observed {
@@ -165,6 +178,7 @@ func (a *OpenCodeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error
 		switch row.Status {
 		case "busy":
 			delete(a.recent, row.ID)
+			delete(a.recentAttributed, row.ID)
 		case "idle":
 			recent, ok := a.recent[row.ID]
 			if !ok || recent.StartTicks != entry.StartTicks {
@@ -172,6 +186,7 @@ func (a *OpenCodeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error
 			}
 			recent.Row, recent.ParentID, recent.StartTicks = row, entry.ParentID, entry.StartTicks
 			a.recent[row.ID] = recent
+			a.recentAttributed[row.ID] = entry.Attributed
 			if now.After(recent.ExpiresAt) {
 				delete(observed, nativeID)
 			}
@@ -179,8 +194,11 @@ func (a *OpenCodeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error
 	}
 	for id, recent := range a.recent {
 		startTicks, alive := instances[recent.Row.PID]
-		if !alive || startTicks != recent.StartTicks || now.After(recent.ExpiresAt) {
+		process, processAlive := processByPID(processes, recent.Row.PID)
+		ambiguousFallback := processAlive && fallbackOwners[openCodeFallbackKey(a.home, process)] > 1 && !a.recentAttributed[id]
+		if !alive || startTicks != recent.StartTicks || now.After(recent.ExpiresAt) || ambiguousFallback {
 			delete(a.recent, id)
+			delete(a.recentAttributed, id)
 			continue
 		}
 		if _, exists := observed[recent.Row.NativeID]; !exists {
@@ -196,14 +214,18 @@ type openCodeObservedSession struct {
 	Row        Session
 	ParentID   string
 	StartTicks uint64
+	Attributed bool
 }
 
-func (a *OpenCodeAdapter) observe(process procscan.Process, records []OpenCodeRecord, statuses map[string]string, observed map[string]openCodeObservedSession) {
+func (a *OpenCodeAdapter) observe(process procscan.Process, records []OpenCodeRecord, statuses map[string]string, attributed bool, observed map[string]openCodeObservedSession) {
 	for _, record := range records {
 		if strings.TrimSpace(record.ID) == "" {
 			continue
 		}
 		status := statuses[record.ID]
+		if status != "busy" && status != "idle" {
+			status = ""
+		}
 		if status == "" {
 			if record.Busy {
 				status = "busy"
@@ -214,14 +236,24 @@ func (a *OpenCodeAdapter) observe(process procscan.Process, records []OpenCodeRe
 			status = "busy"
 		}
 		row := openCodeSession(process, record, status)
-		observed[record.ID] = openCodeObservedSession{Row: row, ParentID: record.ParentID, StartTicks: process.StartTicks}
+		recordAttributed := attributed
+		if previous, ok := observed[record.ID]; ok && previous.Attributed {
+			recordAttributed = true
+		}
+		if statuses[record.ID] == "busy" || statuses[record.ID] == "idle" {
+			recordAttributed = true
+		}
+		observed[record.ID] = openCodeObservedSession{Row: row, ParentID: record.ParentID, StartTicks: process.StartTicks, Attributed: recordAttributed}
 	}
 }
 
 func openCodeSession(process procscan.Process, record OpenCodeRecord, status string) Session {
 	name := strings.TrimSpace(record.Title)
 	if name == "" {
-		name = record.ID
+		name = strings.TrimSpace(record.Slug)
+		if name == "" {
+			name = record.ID
+		}
 	}
 	model := ""
 	if record.ProviderID != "" && record.ModelID != "" {
@@ -231,6 +263,9 @@ func openCodeSession(process procscan.Process, record OpenCodeRecord, status str
 		ID: GlobalID(AgentOpenCode, record.ID), NativeID: record.ID, Agent: AgentOpenCode,
 		Model: ModelOrUnknown(model), Name: name, Project: filepath.Base(record.Directory), Cwd: record.Directory,
 		Kind: record.AgentMode, Status: status, PID: process.PID, Mode: Indeterminate, UpdatedAt: record.UpdatedAt,
+	}
+	if strings.TrimSpace(record.ParentID) != "" {
+		row.Model = ""
 	}
 	if len(record.Todos) > 0 {
 		row.Mode, row.Total = Determinate, len(record.Todos)
@@ -301,9 +336,8 @@ func isOpenCodeProcess(process procscan.Process) bool {
 	}
 	for _, arg := range process.Args {
 		path := strings.ToLower(filepath.ToSlash(arg))
-		base := filepath.Base(path)
-		if (base == "opencode" || base == "opencode.js") &&
-			(strings.Contains(path, "/opencode-ai/") || strings.Contains(path, "/opencode/")) {
+		if strings.HasSuffix(path, "/node_modules/opencode-ai/bin/opencode") ||
+			strings.HasSuffix(path, "/node_modules/opencode-ai/bin/opencode.js") {
 			return true
 		}
 	}
@@ -320,4 +354,17 @@ func openCodeDataRoot(home string, process procscan.Process) string {
 		return filepath.Join(root, "opencode")
 	}
 	return filepath.Join(home, ".local", "share", "opencode")
+}
+
+func openCodeFallbackKey(home string, process procscan.Process) string {
+	return openCodeDataRoot(home, process) + "\x00" + process.Cwd
+}
+
+func processByPID(processes []procscan.Process, pid int) (procscan.Process, bool) {
+	for _, process := range processes {
+		if process.PID == pid {
+			return process, true
+		}
+	}
+	return procscan.Process{}, false
 }

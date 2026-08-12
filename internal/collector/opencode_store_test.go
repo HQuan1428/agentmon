@@ -43,7 +43,7 @@ func TestSQLiteOpenCodeStoreCandidates(t *testing.T) {
 	if parent.ProviderID != "openai" || parent.ModelID != "gpt-5.6-sol" || !parent.Busy {
 		t.Fatalf("parent=%+v", parent)
 	}
-	if parent.AgentMode != "build" || parent.Title != "Parent" || parent.Directory != "/work/p" {
+	if parent.AgentMode != "build" || parent.Title != "Parent" || parent.Slug != "parent" || parent.Directory != "/work/p" {
 		t.Fatalf("parent metadata=%+v", parent)
 	}
 	wantTodos := []OpenCodeTodo{

@@ -17,11 +17,11 @@ type OpenCodeTodo struct {
 }
 
 type OpenCodeRecord struct {
-	ID, ParentID, Title, Directory, AgentMode string
-	ProviderID, ModelID                       string
-	UpdatedAt                                 int64
-	Busy                                      bool
-	Todos                                     []OpenCodeTodo
+	ID, ParentID, Title, Slug, Directory, AgentMode string
+	ProviderID, ModelID                             string
+	UpdatedAt                                       int64
+	Busy                                            bool
+	Todos                                           []OpenCodeTodo
 }
 
 type OpenCodeStore interface {
@@ -78,7 +78,7 @@ func (s *SQLiteOpenCodeStore) records(ctx context.Context, where string, args []
 	}
 	defer db.Close()
 
-	rows, err := db.QueryContext(ctx, `SELECT id, parent_id, title, directory, agent, model, time_updated
+	rows, err := db.QueryContext(ctx, `SELECT id, parent_id, title, slug, directory, agent, model, time_updated
 		FROM session WHERE `+where+` ORDER BY time_updated DESC, id`, args...)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func (s *SQLiteOpenCodeStore) records(ctx context.Context, where string, args []
 	for rows.Next() {
 		var record OpenCodeRecord
 		var parentID, agentMode, model sql.NullString
-		if err := rows.Scan(&record.ID, &parentID, &record.Title, &record.Directory, &agentMode, &model, &record.UpdatedAt); err != nil {
+		if err := rows.Scan(&record.ID, &parentID, &record.Title, &record.Slug, &record.Directory, &agentMode, &model, &record.UpdatedAt); err != nil {
 			return nil, err
 		}
 		record.ParentID = parentID.String
