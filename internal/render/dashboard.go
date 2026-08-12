@@ -152,10 +152,13 @@ func bellBadge(on bool) string {
 	return bellOff.Render("🔇 OFF")
 }
 
-func columnHeader(cw int) string {
-	labels := padRight("PROJECT / SESSION", sessionColW) +
-		padRight("PROGRESS", barW+2) +
-		padRight("TASKS", tasksColW) + "STATUS"
+func columnHeader(cw int, layout Layout) string {
+	labels := padRight("PROJECT / AGENT / SESSION", layout.SessionW)
+	if !layout.Compact {
+		labels += padRight("MODEL", layout.ModelW)
+	}
+	labels += padRight("PROGRESS", layout.BarW+4) +
+		padRight("TASKS", layout.TasksW) + " STATUS"
 	rule := ruleStyle.Render(strings.Repeat("─", cw))
 	return colHeadStyle.Render(labels) + "\n" + rule
 }
@@ -186,6 +189,7 @@ func emptyState(cw, bodyH int) string {
 // table lines (ignored when empty is true); scroll windows the body to fit.
 func Compose(width, height int, c Counts, soundOn bool, body []string, scroll int, empty bool) string {
 	cw := contentWidth(width)
+	layout := LayoutForWidth(width)
 	head := header(cw, c, soundOn)
 	foot := footer()
 
@@ -201,7 +205,7 @@ func Compose(width, height int, c Counts, soundOn bool, body []string, scroll in
 		if b := BodyBudget(height); b > 0 {
 			lines = windowLines(body, scroll, b)
 		}
-		mid = columnHeader(cw) + "\n" + strings.Join(lines, "\n")
+		mid = columnHeader(cw, layout) + "\n" + strings.Join(lines, "\n")
 	}
 
 	// Separator dividing the header (name + status counts) from the table.

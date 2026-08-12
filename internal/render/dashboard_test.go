@@ -11,8 +11,8 @@ import (
 func TestComposeChrome(t *testing.T) {
 	body := BodyLines([]collector.Session{
 		{ID: "w", Name: "work", Project: "proj", Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy"},
-	}, 0, nil)
-	out := Compose(90, 24, Counts{Active: 1, Busy: 1}, true, body, 0, false)
+	}, 0, nil, 120)
+	out := Compose(120, 24, Counts{Active: 1, Busy: 1}, true, body, 0, false)
 
 	// Rounded border corners.
 	for _, want := range []string{"╭", "╮", "╰", "╯"} {
@@ -21,7 +21,7 @@ func TestComposeChrome(t *testing.T) {
 		}
 	}
 	// Header identity + version badge + column headers + footer + counter + bell.
-	for _, want := range []string{"agentmon", "v0.1.0", "PROJECT / SESSION", "PROGRESS", "TASKS", "STATUS", "quit", "sound", "scroll", "active", "🔊 ON"} {
+	for _, want := range []string{"agentmon", "v0.1.0", "PROJECT / AGENT / SESSION", "MODEL", "PROGRESS", "TASKS", "STATUS", "quit", "sound", "scroll", "active", "🔊 ON"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose missing %q", want)
 		}
@@ -38,7 +38,7 @@ var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func TestComposeHasHeaderSeparator(t *testing.T) {
 	body := BodyLines([]collector.Session{
 		{ID: "w", Name: "work", Project: "proj", Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy"},
-	}, 0, nil)
+	}, 0, nil, 90)
 	out := stripANSI(Compose(90, 24, Counts{Active: 1, Busy: 1}, true, body, 0, false))
 
 	// Rule-like content lines (inside the side borders, mostly ─): the header
@@ -104,7 +104,7 @@ func TestComposeCapsToHeight(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		many = append(many, collector.Session{ID: string(rune('a' + i)), Name: "s", Project: "p", Mode: collector.Indeterminate, Status: "busy"})
 	}
-	out := Compose(90, 20, Counts{Active: 40}, true, BodyLines(many, 0, nil), 0, false)
+	out := Compose(90, 20, Counts{Active: 40}, true, BodyLines(many, 0, nil, 90), 0, false)
 	if n := strings.Count(out, "\n") + 1; n > 20 {
 		t.Errorf("compose produced %d lines, exceeds height 20", n)
 	}

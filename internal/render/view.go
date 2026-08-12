@@ -9,11 +9,21 @@ import (
 	"agentmon/internal/collector"
 )
 
-const (
-	barW        = 15 // progress bar width in cells (inside the [ ] brackets)
-	sessionColW = 30 // "PROJECT / SESSION" column
-	tasksColW   = 8  // "TASKS" column
-)
+type Layout struct {
+	Compact  bool
+	SessionW int
+	ModelW   int
+	BarW     int
+	TasksW   int
+}
+
+func LayoutForWidth(total int) Layout {
+	cw := contentWidth(total)
+	if cw < 92 {
+		return Layout{Compact: true, SessionW: cw, BarW: 12, TasksW: 7}
+	}
+	return Layout{SessionW: 32, ModelW: 20, BarW: 15, TasksW: 8}
+}
 
 // Row/column styling. In a non-TTY (tests, pipes) lipgloss strips colors,
 // leaving plain text — so structural assertions still see the labels. The
@@ -33,54 +43,61 @@ var (
 // no border — the frame adds those). Sessions are grouped under a ▾ project
 // header (they arrive sorted by project); each session is a ▸ row with its
 // subagents nested beneath as ├─/└─ ⌁ branches. IDs in dim are drawn faint.
-func BodyLines(sessions []collector.Session, phase int, dim map[string]bool) []string {
+func BodyLines(sessions []collector.Session, phase int, dim map[string]bool, totalWidth int) []string {
 	var lines []string
+	layout := LayoutForWidth(totalWidth)
 	curProject := ""
+	curAgent := collector.Agent("")
 	for _, s := range sessions {
 		if s.Project != curProject {
 			lines = append(lines, projectHeadStyle.Render("▾ "+s.Project))
 			curProject = s.Project
+			curAgent = ""
+		}
+		if s.Agent != curAgent {
+			lines = append(lines, projectHeadStyle.Render("  ▾ "+string(s.Agent)))
+			curAgent = s.Agent
 		}
 		faint := dim[s.ID]
-		lines = append(lines, dimIf(sessionRow(s, phase, !faint), faint))
+		lines = append(lines, dimIf(sessionRow(s, phase, !faint, layout), faint))
 		if s.Blocked && s.NeedsHint != "" {
-			lines = append(lines, needsStyle.Render("    needs: "+truncate(s.NeedsHint, 56)))
+			lines = append(lines, needsStyle.Render("        needs: "+truncate(s.NeedsHint, 56)))
 		}
 		for i, c := range s.Children {
 			branch := "├─"
 			if i == len(s.Children)-1 {
 				branch = "└─"
 			}
-			lines = append(lines, dimIf(childRow(branch, c, phase), dim[c.ID]))
+			lines = append(lines, dimIf(childRow(branch, c, phase, layout), dim[c.ID]))
 		}
 	}
 	return lines
 }
 
 const (
-	sessionIndent = "  "     // sessions sit one level under their ▾ project
-	childIndent   = "      " // subagents sit one level under their ▸ session
+	sessionIndent = "    "   // sessions sit under project and agent
+	childIndent   = "      " // subagents sit under their session
 )
 
 // nameCell builds the left "PROJECT / SESSION" cell: a fixed-width column of
 // prefix + name, truncating the name to whatever room the prefix leaves so the
 // PROGRESS column always starts at the same offset.
-func nameCell(prefix, name string) string {
-	avail := sessionColW - len([]rune(prefix))
+func nameCell(prefix, name string, width int) string {
+	avail := width - len([]rune(prefix))
 	if avail < 1 {
 		avail = 1
 	}
-	return padRight(prefix+truncate(name, avail), sessionColW)
+	return padRight(prefix+truncate(name, avail), width)
 }
 
 // sessionRow builds one session row, indented under its project:
 // ▸ name | [bar] | tasks | status.
-func sessionRow(s collector.Session, phase int, colored bool) string {
+func sessionRow(s collector.Session, phase int, colored bool, layout Layout) string {
 	label := s.Name
 	if s.Kind == "bg" {
 		label += " (bg)"
 	}
-	name := nameCell(sessionIndent+"▸ ", label)
+	name := nameCell(sessionIndent+"▸ ", label, layout.SessionW)
 	if colored {
 		name = strings.Replace(name, "▸", markerStyle.Render("▸"), 1)
 	}
@@ -88,18 +105,33 @@ func sessionRow(s collector.Session, phase int, colored bool) string {
 	if colored {
 		status = statusStyle(s).Render(status)
 	}
-	return name + bracketBar(s, phase) + "  " + padRight(tasksText(s), tasksColW) + " " + status
+	return name + modelCell(s.Model, layout) + progressCell(s, phase, layout) + padRight(tasksText(s), layout.TasksW) + " " + status
 }
 
 // childRow builds a subagent row, indented under its session, in soft gray.
-func childRow(branch string, c collector.Session, phase int) string {
-	name := nameCell(childIndent+branch+" ⌁ ", c.Name)
-	line := name + bracketBar(c, phase) + "  " + padRight(tasksText(c), tasksColW) + " " + statusText(c)
+func childRow(branch string, c collector.Session, phase int, layout Layout) string {
+	name := nameCell(childIndent+branch+" ⌁ ", c.Name, layout.SessionW)
+	line := name + blankModelCell(layout) + progressCell(c, phase, layout) + padRight(tasksText(c), layout.TasksW) + " " + statusText(c)
 	return treeGrayStyle.Render(line)
 }
 
-func bracketBar(s collector.Session, phase int) string {
-	return "[" + RenderBar(s, barW, phase) + "]"
+func modelCell(model string, layout Layout) string {
+	if layout.Compact {
+		return ""
+	}
+	return padRight(truncate(collector.ModelOrUnknown(model), layout.ModelW), layout.ModelW)
+}
+
+func blankModelCell(layout Layout) string {
+	if layout.Compact {
+		return ""
+	}
+	return strings.Repeat(" ", layout.ModelW)
+}
+
+func progressCell(s collector.Session, phase int, layout Layout) string {
+	bar := "[" + RenderBar(s, layout.BarW, phase) + "]"
+	return padRight(bar, layout.BarW+4)
 }
 
 // tasksText is the TASKS column: a fraction when known, DONE when finished,

@@ -201,7 +201,7 @@ func (m Model) bodyLines() ([]collector.Session, []string) {
 	if len(view) == 0 {
 		return view, nil
 	}
-	return view, render.BodyLines(view, m.phase, dim)
+	return view, render.BodyLines(view, m.phase, dim, m.width)
 }
 
 // maxScroll is the largest scroll offset that still fills the body viewport.
