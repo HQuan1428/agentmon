@@ -16,16 +16,24 @@ import (
 const aiderRecentDuration = 4 * time.Second
 
 type AiderAdapter struct {
-	home    string
-	history *AiderHistoryScanner
-	now     func() time.Time
-	recent  map[string]recentSession
+	home         string
+	history      *AiderHistoryScanner
+	now          func() time.Time
+	recent       map[string]recentSession
+	attributions map[string]aiderAttribution
+}
+
+type aiderAttribution struct {
+	inputPath  string
+	chatPath   string
+	pid        int
+	startTicks uint64
 }
 
 func NewAiderAdapter(home string) *AiderAdapter {
 	return &AiderAdapter{
 		home: home, history: NewAiderHistoryScanner(), now: time.Now,
-		recent: map[string]recentSession{},
+		recent: map[string]recentSession{}, attributions: map[string]aiderAttribution{},
 	}
 }
 
@@ -57,22 +65,31 @@ func (a *AiderAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 			delete(a.recent, id)
 		}
 	}
+	for id, attribution := range a.attributions {
+		startTicks, alive := instances[attribution.pid]
+		if !alive || startTicks != attribution.startTicks {
+			a.forgetAttribution(id)
+		}
+	}
 
 	rows := make([]Session, 0, len(processes))
 	for _, process := range processes {
 		row := aiderProcessObservation(process)
 		inputPath, chatPath, attributed, ambiguous := aiderHistoryPaths(process, owners[filepath.Clean(process.Cwd)], openOwners)
 		if !attributed {
+			a.forgetAttribution(row.ID)
 			if ambiguous {
 				a.history.Scan(inputPath, chatPath, false)
-				delete(a.recent, row.ID)
 			}
-			if recent, ok := a.recent[row.ID]; ok && !now.After(recent.ExpiresAt) {
-				rows = append(rows, recent.Row)
-			} else {
-				rows = append(rows, row)
-			}
+			rows = append(rows, row)
 			continue
+		}
+		if previous, ok := a.attributions[row.ID]; ok &&
+			(previous.inputPath != inputPath || previous.chatPath != chatPath || previous.startTicks != process.StartTicks) {
+			a.forgetAttribution(row.ID)
+		}
+		a.attributions[row.ID] = aiderAttribution{
+			inputPath: inputPath, chatPath: chatPath, pid: process.PID, startTicks: process.StartTicks,
 		}
 
 		history := a.history.Scan(inputPath, chatPath, true)
@@ -110,6 +127,14 @@ func (a *AiderAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 	return rows, nil
 }
 
+func (a *AiderAdapter) forgetAttribution(id string) {
+	if attribution, ok := a.attributions[id]; ok {
+		a.history.Scan(attribution.inputPath, attribution.chatPath, false)
+		delete(a.attributions, id)
+	}
+	delete(a.recent, id)
+}
+
 func aiderProcessObservation(process procscan.Process) Session {
 	nativeID := fmt.Sprintf("pid:%d", process.PID)
 	return Session{
@@ -120,7 +145,7 @@ func aiderProcessObservation(process procscan.Process) Session {
 }
 
 func isAiderProcess(process procscan.Process) bool {
-	if aiderExecutable(process.Comm) || aiderExecutable(process.Exe) {
+	if aiderExecutable(process.Exe) {
 		return true
 	}
 	if !pythonExecutable(process.Exe) && !pythonExecutable(process.Comm) {
@@ -207,8 +232,13 @@ func matchingOpenPaths(files []procscan.OpenFile, candidates []string) []string 
 
 func aiderHistoryReadable(inputPath, chatPath string) bool {
 	for _, path := range []string{inputPath, chatPath} {
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		file, err := os.Open(path)
+		if err != nil {
+			return false
+		}
+		info, statErr := file.Stat()
+		closeErr := file.Close()
+		if statErr != nil || closeErr != nil || info.IsDir() {
 			return false
 		}
 	}
