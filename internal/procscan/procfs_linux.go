@@ -33,8 +33,8 @@ func (p *ProcFS) Snapshot() (Snapshot, error) {
 		if err != nil || pid < 0 {
 			continue
 		}
-		process, err := p.readProcess(pid)
-		if err != nil || process.UID != p.UID {
+		process, matched, err := p.readOwnedProcess(pid)
+		if err != nil || !matched {
 			continue
 		}
 		snapshot.Processes = append(snapshot.Processes, process)
@@ -42,12 +42,24 @@ func (p *ProcFS) Snapshot() (Snapshot, error) {
 	return snapshot, nil
 }
 
-func (p *ProcFS) readProcess(pid int) (Process, error) {
+func (p *ProcFS) readOwnedProcess(pid int) (Process, bool, error) {
 	dir := filepath.Join(p.Root, strconv.Itoa(pid))
 	uid, err := readEffectiveUID(filepath.Join(dir, "status"))
 	if err != nil {
-		return Process{}, err
+		return Process{}, false, err
 	}
+	if uid != p.UID {
+		return Process{}, false, nil
+	}
+	process, err := p.readProcess(pid, uid)
+	if err != nil {
+		return Process{}, false, err
+	}
+	return process, true, nil
+}
+
+func (p *ProcFS) readProcess(pid int, uid uint32) (Process, error) {
+	dir := filepath.Join(p.Root, strconv.Itoa(pid))
 	ppid, startTicks, err := readStat(filepath.Join(dir, "stat"))
 	if err != nil {
 		return Process{}, err
@@ -89,23 +101,29 @@ func (p *ProcFS) readProcess(pid int) (Process, error) {
 	}, nil
 }
 
-func readFDs(procDir string) (files []OpenFile, socketInodes map[string]bool) {
-	socketInodes = map[string]bool{}
+func readFDs(procDir string) (files []OpenFile, socketInodes map[uint64]bool) {
+	socketInodes = map[uint64]bool{}
 	entries, err := os.ReadDir(filepath.Join(procDir, "fd"))
 	if err != nil {
 		return nil, socketInodes
 	}
 	for _, entry := range entries {
+		fd, err := strconv.Atoi(entry.Name())
+		if err != nil || fd < 0 {
+			continue
+		}
 		target, err := os.Readlink(filepath.Join(procDir, "fd", entry.Name()))
 		if err != nil {
 			continue
 		}
 		if strings.HasPrefix(target, "socket:[") && strings.HasSuffix(target, "]") {
-			socketInodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")] = true
+			inode, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]"), 10, 64)
+			if err == nil {
+				socketInodes[inode] = true
+			}
 			continue
 		}
-		fd, err := strconv.Atoi(entry.Name())
-		if err == nil && filepath.IsAbs(target) {
+		if filepath.IsAbs(target) {
 			files = append(files, OpenFile{FD: fd, Path: target})
 		}
 	}
@@ -118,7 +136,7 @@ func readFDs(procDir string) (files []OpenFile, socketInodes map[string]bool) {
 	return files, socketInodes
 }
 
-func readListeners(netDir string, socketInodes map[string]bool) []Listener {
+func readListeners(netDir string, socketInodes map[uint64]bool) []Listener {
 	var listeners []Listener
 	listeners = append(listeners, readTCPListeners(filepath.Join(netDir, "tcp"), "tcp", socketInodes)...)
 	listeners = append(listeners, readTCPListeners(filepath.Join(netDir, "tcp6"), "tcp6", socketInodes)...)
@@ -134,7 +152,7 @@ func readListeners(netDir string, socketInodes map[string]bool) []Listener {
 	return listeners
 }
 
-func readTCPListeners(path, network string, socketInodes map[string]bool) []Listener {
+func readTCPListeners(path, network string, socketInodes map[uint64]bool) []Listener {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -142,7 +160,11 @@ func readTCPListeners(path, network string, socketInodes map[string]bool) []List
 	var listeners []Listener
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 10 || fields[3] != "0A" || !socketInodes[fields[9]] {
+		if len(fields) < 10 || fields[3] != "0A" {
+			continue
+		}
+		inode, err := strconv.ParseUint(fields[9], 10, 64)
+		if err != nil || !socketInodes[inode] {
 			continue
 		}
 		address, port, ok := parseTCPAddress(fields[1], network)

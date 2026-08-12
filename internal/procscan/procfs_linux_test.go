@@ -76,6 +76,30 @@ func TestProcFSSnapshotReturnsNoArgsForEmptyCmdline(t *testing.T) {
 	}
 }
 
+func TestProcFSRejectsOtherUIDBeforeProcessMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+	foreignDir := filepath.Join(root, "202")
+	if err := os.Mkdir(foreignDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreignDir, "status"), []byte("Name:\taider\nUid:\t2000\t2000\t2000\t2000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	proc := &ProcFS{Root: root, UID: 1000}
+	if _, matched, err := proc.readOwnedProcess(202); err != nil || matched {
+		t.Fatalf("foreign process result: matched=%t err=%v", matched, err)
+	}
+	snap, err := proc.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Processes) != 1 || snap.Processes[0].PID != 101 {
+		t.Fatalf("processes=%+v", snap.Processes)
+	}
+}
+
 func TestProcFSOpenFiles(t *testing.T) {
 	root := t.TempDir()
 	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
@@ -125,6 +149,43 @@ func TestProcFSLoopbackListeners(t *testing.T) {
 	}
 	p := snap.Processes[0]
 	if len(p.Listeners) != 2 || p.Listeners[0].Network != "tcp" || p.Listeners[0].Address != "127.0.0.1" || p.Listeners[0].Port != 4096 || p.Listeners[1].Network != "tcp" || p.Listeners[1].Address != "127.0.0.1" || p.Listeners[1].Port != 4098 {
+		t.Fatalf("listeners=%+v", p.Listeners)
+	}
+}
+
+func TestProcFSRetainsOnlyValidOwnedListenEntries(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+	fdDir := filepath.Join(root, "101", "fd")
+	for name, target := range map[string]string{
+		"8":        "socket:[34567]",
+		"9":        "socket:[34568]",
+		"10":       "socket:[not-an-inode]",
+		"11":       "socket:[34571]",
+		"-1":       "socket:[34572]",
+		"not-a-fd": "socket:[34570]",
+	} {
+		if err := os.Symlink(target, filepath.Join(fdDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTCPFixture(t, root, "tcp", []string{
+		"   0: 0100007F:1000 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34567 1 0000000000000000 100 0 0 10 0",
+		"   1: 0100007F:1001 00000000:0000 01 00000000:00000000 00:00000000 00000000   1000        0 34568 1 0000000000000000 100 0 0 10 0",
+		"   2: 0100007F:1002 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34569 1 0000000000000000 100 0 0 10 0",
+		"   3: 0100007F:1003 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 not-an-inode 1 0000000000000000 100 0 0 10 0",
+		"   4: 0100007F:1004 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34570 1 0000000000000000 100 0 0 10 0",
+		"   5: 0100007F:1005 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34572 1 0000000000000000 100 0 0 10 0",
+		"   6: malformed",
+		"   7: not-hex:1007 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34571 1 0000000000000000 100 0 0 10 0",
+	})
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := snap.Processes[0]
+	if len(p.Listeners) != 1 || p.Listeners[0].Network != "tcp" || p.Listeners[0].Address != "127.0.0.1" || p.Listeners[0].Port != 4096 {
 		t.Fatalf("listeners=%+v", p.Listeners)
 	}
 }
