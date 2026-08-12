@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestSQLiteOpenCodeStoreCandidates(t *testing.T) {
+func TestSQLiteOpenCodeStoreReadOnlyAndIgnoresAuth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.db")
 	db := openOpenCodeFixture(t, path)
 	insertOpenCodeFixture(t, db)
