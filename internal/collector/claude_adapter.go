@@ -41,7 +41,11 @@ func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) 
 			}
 		}
 
-		if transcript.HaveTodos {
+		if done, total, ok := ParseTasksDir(a.root, s.ID); ok {
+			// Current Claude Code (TaskCreate/TaskUpdate store) takes priority.
+			s.Mode, s.Done, s.Total = Determinate, done, total
+		} else if transcript.HaveTodos {
+			// Older sessions expose the list via TodoWrite in the transcript.
 			s.Mode, s.Done, s.Total = Determinate, transcript.Done, transcript.Total
 		} else {
 			s.Mode = Indeterminate
