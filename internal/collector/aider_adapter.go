@@ -109,6 +109,8 @@ func (a *AiderAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 			delete(a.recent, row.ID)
 		case history.Done:
 			row.Status = "idle"
+			// A finished turn is a completed unit → renders as ✓ DONE, not ● IDLE.
+			row.Mode, row.Done, row.Total = Determinate, 1, 1
 			recent, ok := a.recent[row.ID]
 			if !ok || recent.StartTicks != process.StartTicks {
 				recent.ExpiresAt = now.Add(aiderRecentDuration)

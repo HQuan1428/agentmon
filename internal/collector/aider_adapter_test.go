@@ -172,6 +172,10 @@ func TestAiderAdapterExpiresDoneRowAndRejectsPIDReuse(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Status != "idle" || !rows[0].IsDone() {
 		t.Fatalf("done rows=%+v err=%v", rows, err)
 	}
+	// A finished Aider turn must render as DONE, not IDLE: mark it a completed unit.
+	if rows[0].Mode != Determinate || rows[0].Done != 1 || rows[0].Total != 1 {
+		t.Fatalf("done row should be Determinate 1/1, got %+v", rows[0])
+	}
 	now = now.Add(4 * time.Second)
 	rows, err = adapter.Discover(snapshot)
 	if err != nil || len(rows) != 1 || !rows[0].IsDone() {
