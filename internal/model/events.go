@@ -20,10 +20,18 @@ type flatState struct {
 }
 
 func flatten(sessions []collector.Session, into map[string]flatState) {
+	flattenWithAgent(sessions, into, "")
+}
+
+func flattenWithAgent(sessions []collector.Session, into map[string]flatState, parentAgent collector.Agent) {
 	for _, s := range sessions {
-		into[sessionID(s)] = flatState{done: s.IsDone(), blocked: s.Blocked}
+		agent := s.Agent
+		if agent == "" {
+			agent = parentAgent
+		}
+		into[sessionID(s, agent)] = flatState{done: s.IsDone(), blocked: s.Blocked}
 		if len(s.Children) > 0 {
-			flatten(s.Children, into)
+			flattenWithAgent(s.Children, into, agent)
 		}
 	}
 }
@@ -48,27 +56,35 @@ func DiffEvents(prev, cur []collector.Session) []Event {
 	return evs
 }
 
-func sessionID(s collector.Session) string {
-	if s.Agent == "" {
+func sessionID(s collector.Session, inheritedAgent collector.Agent) string {
+	agent := s.Agent
+	if agent == "" {
+		agent = inheritedAgent
+	}
+	if agent == "" {
 		return s.ID
 	}
 	native := s.NativeID
 	if native == "" {
 		native = s.ID
 	}
-	return collector.GlobalID(s.Agent, native)
+	return collector.GlobalID(agent, native)
 }
 
 // flattenOrder returns IDs in a stable top-down, children-after-parent order.
 func flattenOrder(sessions []collector.Session) []string {
 	var ids []string
-	var walk func([]collector.Session)
-	walk = func(ss []collector.Session) {
+	var walk func([]collector.Session, collector.Agent)
+	walk = func(ss []collector.Session, parentAgent collector.Agent) {
 		for _, s := range ss {
-			ids = append(ids, sessionID(s))
-			walk(s.Children)
+			agent := s.Agent
+			if agent == "" {
+				agent = parentAgent
+			}
+			ids = append(ids, sessionID(s, agent))
+			walk(s.Children, agent)
 		}
 	}
-	walk(sessions)
+	walk(sessions, "")
 	return ids
 }

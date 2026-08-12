@@ -60,3 +60,22 @@ func TestDiffEventsNamespacedIDsDoNotCollide(t *testing.T) {
 		t.Fatalf("want one codex:same DoneEvent, got %v", evs)
 	}
 }
+
+func TestDiffEventsChildIDsInheritParentAgent(t *testing.T) {
+	prev := []collector.Session{
+		{ID: "parent", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy",
+			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
+		{ID: "parent", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "busy",
+			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
+	}
+	cur := []collector.Session{
+		{ID: "parent", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy",
+			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
+		{ID: "parent", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "busy",
+			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "idle"}}},
+	}
+	evs := DiffEvents(prev, cur)
+	if len(evs) != 1 || evs[0].SessionID != "codex:child" || evs[0].Kind != DoneEvent {
+		t.Fatalf("want one codex:child DoneEvent, got %v", evs)
+	}
+}
