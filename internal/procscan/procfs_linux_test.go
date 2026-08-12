@@ -76,6 +76,79 @@ func TestProcFSSnapshotReturnsNoArgsForEmptyCmdline(t *testing.T) {
 	}
 }
 
+func TestProcFSOpenFiles(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+
+	fdDir := filepath.Join(root, "101", "fd")
+	if err := os.Symlink("/home/u/.codex/sessions/2026/08/12/rollout-a.jsonl", filepath.Join(fdDir, "7")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/other.jsonl", filepath.Join(fdDir, "10")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[34567]", filepath.Join(fdDir, "8")); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := snap.Processes[0]
+	if len(p.Files) != 2 || p.Files[0].FD != 7 || p.Files[0].Path != "/home/u/.codex/sessions/2026/08/12/rollout-a.jsonl" || p.Files[1].FD != 10 || p.Files[1].Path != "/tmp/other.jsonl" {
+		t.Fatalf("files=%+v", p.Files)
+	}
+}
+
+func TestProcFSLoopbackListeners(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+	if err := os.Symlink("socket:[34567]", filepath.Join(root, "101", "fd", "8")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[34568]", filepath.Join(root, "101", "fd", "9")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[34569]", filepath.Join(root, "101", "fd", "10")); err != nil {
+		t.Fatal(err)
+	}
+	writeTCPFixture(t, root, "tcp", []string{
+		"   0: 0100007F:1002 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34569 1 0000000000000000 100 0 0 10 0",
+		"   0: 0100007F:1000 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34567 1 0000000000000000 100 0 0 10 0",
+		"   1: 00000000:1001 00000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 34568 1 0000000000000000 100 0 0 10 0",
+	})
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := snap.Processes[0]
+	if len(p.Listeners) != 2 || p.Listeners[0].Network != "tcp" || p.Listeners[0].Address != "127.0.0.1" || p.Listeners[0].Port != 4096 || p.Listeners[1].Network != "tcp" || p.Listeners[1].Address != "127.0.0.1" || p.Listeners[1].Port != 4098 {
+		t.Fatalf("listeners=%+v", p.Listeners)
+	}
+}
+
+func TestProcFSIPv6LoopbackListeners(t *testing.T) {
+	root := t.TempDir()
+	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+	if err := os.Symlink("socket:[45678]", filepath.Join(root, "101", "fd", "8")); err != nil {
+		t.Fatal(err)
+	}
+	writeTCPFixture(t, root, "tcp6", []string{
+		"   0: 00000000000000000000000001000000:1001 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000   1000        0 45678 1 0000000000000000 100 0 0 10 0",
+	})
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := snap.Processes[0]
+	if len(p.Listeners) != 1 || p.Listeners[0].Network != "tcp6" || p.Listeners[0].Address != "::1" || p.Listeners[0].Port != 4097 {
+		t.Fatalf("listeners=%+v", p.Listeners)
+	}
+}
+
 func writeProc(t *testing.T, root string, pid int, realUID, effectiveUID uint32, comm string, args []string, cwd string, env []string) {
 	t.Helper()
 	dir := filepath.Join(root, strconv.Itoa(pid))
@@ -105,6 +178,18 @@ func writeProc(t *testing.T, root string, pid int, realUID, effectiveUID uint32,
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join("/usr/bin", comm), filepath.Join(dir, "exe")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTCPFixture(t *testing.T, root, network string, rows []string) {
+	t.Helper()
+	netDir := filepath.Join(root, "net")
+	if err := os.MkdirAll(netDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" + strings.Join(rows, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(netDir, network), []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

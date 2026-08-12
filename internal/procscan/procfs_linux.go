@@ -3,9 +3,12 @@
 package procscan
 
 import (
+	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -69,6 +72,7 @@ func (p *ProcFS) readProcess(pid int) (Process, error) {
 	if err != nil {
 		return Process{}, err
 	}
+	files, socketInodes := readFDs(dir)
 
 	return Process{
 		PID:        pid,
@@ -80,7 +84,117 @@ func (p *ProcFS) readProcess(pid int) (Process, error) {
 		Cwd:        cwd,
 		Args:       args,
 		Env:        env,
+		Files:      files,
+		Listeners:  readListeners(filepath.Join(p.Root, "net"), socketInodes),
 	}, nil
+}
+
+func readFDs(procDir string) (files []OpenFile, socketInodes map[string]bool) {
+	socketInodes = map[string]bool{}
+	entries, err := os.ReadDir(filepath.Join(procDir, "fd"))
+	if err != nil {
+		return nil, socketInodes
+	}
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join(procDir, "fd", entry.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(target, "socket:[") && strings.HasSuffix(target, "]") {
+			socketInodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")] = true
+			continue
+		}
+		fd, err := strconv.Atoi(entry.Name())
+		if err == nil && filepath.IsAbs(target) {
+			files = append(files, OpenFile{FD: fd, Path: target})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].FD == files[j].FD {
+			return files[i].Path < files[j].Path
+		}
+		return files[i].FD < files[j].FD
+	})
+	return files, socketInodes
+}
+
+func readListeners(netDir string, socketInodes map[string]bool) []Listener {
+	var listeners []Listener
+	listeners = append(listeners, readTCPListeners(filepath.Join(netDir, "tcp"), "tcp", socketInodes)...)
+	listeners = append(listeners, readTCPListeners(filepath.Join(netDir, "tcp6"), "tcp6", socketInodes)...)
+	sort.Slice(listeners, func(i, j int) bool {
+		if listeners[i].Network != listeners[j].Network {
+			return listeners[i].Network < listeners[j].Network
+		}
+		if listeners[i].Address != listeners[j].Address {
+			return listeners[i].Address < listeners[j].Address
+		}
+		return listeners[i].Port < listeners[j].Port
+	})
+	return listeners
+}
+
+func readTCPListeners(path, network string, socketInodes map[string]bool) []Listener {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var listeners []Listener
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 10 || fields[3] != "0A" || !socketInodes[fields[9]] {
+			continue
+		}
+		address, port, ok := parseTCPAddress(fields[1], network)
+		if !ok {
+			continue
+		}
+		listeners = append(listeners, Listener{Network: network, Address: address, Port: port})
+	}
+	return listeners
+}
+
+func parseTCPAddress(localAddress, network string) (string, int, bool) {
+	hexAddress, hexPort, found := strings.Cut(localAddress, ":")
+	if !found {
+		return "", 0, false
+	}
+	port, err := strconv.ParseUint(hexPort, 16, 16)
+	if err != nil {
+		return "", 0, false
+	}
+	address, ok := decodeTCPAddress(hexAddress, network)
+	if !ok || !(address.IsLoopback() || address.Unmap().IsLoopback()) {
+		return "", 0, false
+	}
+	return address.String(), int(port), true
+}
+
+func decodeTCPAddress(hexAddress, network string) (netip.Addr, bool) {
+	bytes, err := hex.DecodeString(hexAddress)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	switch network {
+	case "tcp":
+		if len(bytes) != 4 {
+			return netip.Addr{}, false
+		}
+		return netip.AddrFrom4([4]byte{bytes[3], bytes[2], bytes[1], bytes[0]}), true
+	case "tcp6":
+		if len(bytes) != 16 {
+			return netip.Addr{}, false
+		}
+		for i := 0; i < len(bytes); i += 4 {
+			bytes[i], bytes[i+3] = bytes[i+3], bytes[i]
+			bytes[i+1], bytes[i+2] = bytes[i+2], bytes[i+1]
+		}
+		var address [16]byte
+		copy(address[:], bytes)
+		return netip.AddrFrom16(address), true
+	default:
+		return netip.Addr{}, false
+	}
 }
 
 func readEffectiveUID(path string) (uint32, error) {
