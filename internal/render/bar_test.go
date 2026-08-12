@@ -34,25 +34,15 @@ func TestRenderBarDone(t *testing.T) {
 
 func TestRenderBarSweepWidthStable(t *testing.T) {
 	s := collector.Session{Mode: collector.Indeterminate, Status: "busy"}
+	block := runeLen(string(sweepGrad)) // gradient block cells
 	for phase := 0; phase < 20; phase++ {
-		bar := RenderBar(s, 12, phase)
-		if runeLen(bar) != 12 {
-			t.Fatalf("phase %d width=%d want 12 (%q)", phase, runeLen(bar), bar)
+		bar := RenderBar(s, 15, phase)
+		if runeLen(bar) != 15 {
+			t.Fatalf("phase %d width=%d want 15 (%q)", phase, runeLen(bar), bar)
 		}
-		if strings.Count(bar, "▓") != 3 {
-			t.Errorf("phase %d sweep block=%d want 3", phase, strings.Count(bar, "▓"))
+		// The empty track shrinks by exactly the gradient block width.
+		if got := strings.Count(bar, empty); got != 15-block {
+			t.Errorf("phase %d empty cells=%d want %d (%q)", phase, got, 15-block, bar)
 		}
-	}
-}
-
-func TestLabel(t *testing.T) {
-	if l := Label(collector.Session{Kind: "bg", JobState: "blocked", Blocked: true}); l != "⏸ blocked" {
-		t.Errorf("blocked label=%q", l)
-	}
-	if l := Label(collector.Session{Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy"}); l != "6/10" {
-		t.Errorf("determinate label=%q", l)
-	}
-	if l := Label(collector.Session{Mode: collector.Indeterminate, Status: "busy"}); l != "sweep" {
-		t.Errorf("sweep label=%q", l)
 	}
 }

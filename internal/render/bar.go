@@ -1,7 +1,6 @@
 package render
 
 import (
-	"fmt"
 	"math"
 	"strings"
 
@@ -14,6 +13,12 @@ const (
 	wave  = "▓"
 )
 
+// sweepGrad is the gradient block that slides along an indeterminate bar.
+var sweepGrad = []rune("░▒▓█▓▒░")
+
+// RenderBar renders the inner progress bar (no brackets) of the given width.
+// Determinate bars fill left-to-right with a wavefront; indeterminate ones
+// bounce a soft gradient block; done bars are solid.
 func RenderBar(s collector.Session, width, phase int) string {
 	if width < 1 {
 		width = 1
@@ -34,10 +39,12 @@ func RenderBar(s collector.Session, width, phase int) string {
 		}
 		return b + strings.Repeat(empty, rest)
 	}
-	// Indeterminate running: bounce a 3-wide block.
-	block := 3
+	// Indeterminate running: bounce the gradient block along an empty track.
+	grad := sweepGrad
+	block := len(grad)
 	if block > width {
 		block = width
+		grad = sweepGrad[:block]
 	}
 	span := width - block
 	pos := 0
@@ -55,20 +62,7 @@ func RenderBar(s collector.Session, width, phase int) string {
 		runes[i] = empty
 	}
 	for i := 0; i < block; i++ {
-		runes[pos+i] = wave
+		runes[pos+i] = string(grad[i])
 	}
 	return strings.Join(runes, "")
-}
-
-func Label(s collector.Session) string {
-	if s.Blocked {
-		return "⏸ blocked"
-	}
-	if s.IsDone() {
-		return "done"
-	}
-	if s.Mode == collector.Determinate {
-		return fmt.Sprintf("%d/%d", s.Done, s.Total)
-	}
-	return "sweep"
 }

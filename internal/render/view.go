@@ -10,41 +10,37 @@ import (
 )
 
 const (
-	barW         = 16 // progress bar width in cells
+	barW         = 15 // progress bar width in cells (inside the [ ] brackets)
 	sessionColW  = 30 // "PROJECT / SESSION" column
-	tasksColW    = 9  // "TASKS" column
+	tasksColW    = 8  // "TASKS" column
 	nameMax      = 24 // session name truncation
-	childNameMax = 20 // subagent name truncation
+	childNameMax = 18 // subagent name truncation
 )
 
-// Column-styling. In a non-TTY (tests, pipes) lipgloss strips colors, leaving
-// plain text — so structural assertions still see the labels. The done-fade
-// dim is applied as raw ANSI (see dimIf) so it survives regardless.
+// Row/column styling. In a non-TTY (tests, pipes) lipgloss strips colors,
+// leaving plain text — so structural assertions still see the labels. The
+// done-fade dim is applied as raw ANSI (see dimIf) so it survives regardless.
 var (
-	projectHeadStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))    // blue
-	treeGrayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))              // soft gray
-	needsStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true) // amber
-	statusBusy       = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))              // yellow
-	statusDone       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))               // green
-	statusBlocked    = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)   // magenta
-	statusRun        = lipgloss.NewStyle().Foreground(lipgloss.Color("44"))               // cyan
+	markerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")) // ▸ session marker
+	treeGrayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))           // subagent rows
+	needsStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true)
+	statusBusy    = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true) // ⚡ BUSY
+	statusSweep   = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
+	statusDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)  // ✓ DONE
+	statusBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true) // ⏸ BLOCKED
 )
 
 // BodyLines renders the session table as individual lines (no column header,
-// no border — the frame adds those). IDs in dim are drawn faint. It groups by
-// project and nests subagents as a tree.
+// no border — the frame adds those). It is a flat list: each session is a
+// ▸ row, its subagents nested beneath with ├─/└─ ⌁ branches. IDs in dim are
+// drawn faint.
 func BodyLines(sessions []collector.Session, phase int, dim map[string]bool) []string {
 	var lines []string
-	curProject := ""
 	for _, s := range sessions {
-		if s.Project != curProject {
-			lines = append(lines, projectHeadStyle.Render("▸ "+s.Project))
-			curProject = s.Project
-		}
 		faint := dim[s.ID]
 		lines = append(lines, dimIf(sessionRow(s, phase, !faint), faint))
 		if s.Blocked && s.NeedsHint != "" {
-			lines = append(lines, needsStyle.Render("     needs: "+truncate(s.NeedsHint, 56)))
+			lines = append(lines, needsStyle.Render("    needs: "+truncate(s.NeedsHint, 56)))
 		}
 		for i, c := range s.Children {
 			branch := "├─"
@@ -57,52 +53,60 @@ func BodyLines(sessions []collector.Session, phase int, dim map[string]bool) []s
 	return lines
 }
 
-// sessionRow builds one top-level row: name | bar | tasks | status.
+// sessionRow builds one top-level row: ▸ name | [bar] | tasks | status.
 func sessionRow(s collector.Session, phase int, colored bool) string {
-	name := padRight("  "+truncate(s.Name, nameMax), sessionColW)
-	bar := RenderBar(s, barW, phase)
-	tasks := padRight(tasksText(s), tasksColW)
+	label := truncate(s.Name, nameMax)
+	if s.Kind == "bg" {
+		label += " (bg)"
+	}
+	name := padRight("▸ "+label, sessionColW)
+	if colored {
+		name = strings.Replace(name, "▸", markerStyle.Render("▸"), 1)
+	}
 	status := statusText(s)
 	if colored {
 		status = statusStyle(s).Render(status)
 	}
-	return name + bar + "  " + tasks + " " + status
+	return name + bracketBar(s, phase) + "  " + padRight(tasksText(s), tasksColW) + " " + status
 }
 
 // childRow builds a subagent row, drawn entirely in soft gray.
 func childRow(branch string, c collector.Session, phase int) string {
-	name := padRight("     "+branch+" "+truncate(c.Name, childNameMax), sessionColW)
-	bar := RenderBar(c, barW, phase)
-	tasks := padRight(tasksText(c), tasksColW)
-	line := name + bar + "  " + tasks + " " + statusText(c)
+	name := padRight("    "+branch+" ⌁ "+truncate(c.Name, childNameMax), sessionColW)
+	line := name + bracketBar(c, phase) + "  " + padRight(tasksText(c), tasksColW) + " " + statusText(c)
 	return treeGrayStyle.Render(line)
 }
 
-// tasksText is the TASKS column: a fraction when known, else an em dash.
+func bracketBar(s collector.Session, phase int) string {
+	return "[" + RenderBar(s, barW, phase) + "]"
+}
+
+// tasksText is the TASKS column: a fraction when known, DONE when finished,
+// or a dash for indeterminate work with no task count.
 func tasksText(s collector.Session) string {
 	if s.Mode == collector.Determinate && s.Total > 0 {
 		if s.IsDone() {
-			return "done"
+			return "DONE"
 		}
 		return fmt.Sprintf("%d/%d", s.Done, s.Total)
 	}
 	if s.IsDone() {
-		return "done"
+		return "DONE"
 	}
-	return "—"
+	return "--"
 }
 
-// statusText is the STATUS column word.
+// statusText is the STATUS column: an icon plus an uppercase word.
 func statusText(s collector.Session) string {
 	switch {
 	case s.Blocked:
-		return "⏸ blocked"
+		return "⏸ BLOCKED"
 	case s.IsDone():
-		return "done"
-	case s.Status == "busy":
-		return "busy"
+		return "✓ DONE"
+	case s.Mode == collector.Determinate:
+		return "⚡ BUSY"
 	default:
-		return "running"
+		return "🔄 SWEEP"
 	}
 }
 
@@ -112,10 +116,10 @@ func statusStyle(s collector.Session) lipgloss.Style {
 		return statusBlocked
 	case s.IsDone():
 		return statusDone
-	case s.Status == "busy":
+	case s.Mode == collector.Determinate:
 		return statusBusy
 	default:
-		return statusRun
+		return statusSweep
 	}
 }
 

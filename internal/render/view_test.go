@@ -7,20 +7,30 @@ import (
 	"agentmon/internal/collector"
 )
 
-func TestBodyLinesGroupsAndTree(t *testing.T) {
+func TestBodyLinesFlatSessionsAndTree(t *testing.T) {
 	sessions := []collector.Session{
-		{ID: "w", Name: "work", Project: "proj", Kind: "interactive", Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy",
+		{ID: "w", Name: "improve-finbert", Project: "proj", Kind: "interactive", Mode: collector.Determinate, Done: 6, Total: 10, Status: "busy",
 			Children: []collector.Session{
-				{ID: "c", Name: "Review Task 6", Kind: "sub:general-purpose", Mode: collector.Indeterminate, Status: "idle"},
+				{ID: "c", Name: "task-6-review", Kind: "sub:general-purpose", Mode: collector.Indeterminate, Status: "idle"},
 			}},
-		{ID: "b", Name: "bgjob", Project: "proj", Kind: "bg", JobState: "blocked", Blocked: true, NeedsHint: "commit now?", Mode: collector.Determinate, Done: 41, Total: 41},
+		{ID: "b", Name: "da_cnm", Project: "proj", Kind: "bg", JobState: "blocked", Blocked: true, NeedsHint: "commit now?", Mode: collector.Determinate, Done: 41, Total: 41},
 	}
 	out := strings.Join(BodyLines(sessions, 0, nil), "\n")
 
-	for _, want := range []string{"▸ proj", "└─", "6/10", "busy", "⏸ blocked", "41/41", "needs: commit now?"} {
+	for _, want := range []string{
+		"▸ improve-finbert",  // flat ▸ session marker
+		"└─ ⌁ task-6-review", // subagent branch + icon
+		"[", "]",             // bracketed bar
+		"6/10", "41/41", "DONE", // TASKS column (uppercase DONE)
+		"⚡ BUSY", "✓ DONE", "⏸ BLOCKED", // STATUS icons + uppercase
+		"(bg)", "needs: commit now?",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("body missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "▸ proj") {
+		t.Errorf("flat list should not render a project-group header:\n%s", out)
 	}
 }
 
