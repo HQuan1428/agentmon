@@ -32,6 +32,10 @@ func pidAlive(pid int) bool {
 }
 
 func ScanSessions(root string) ([]Session, error) {
+	return scanSessions(root, pidAlive)
+}
+
+func scanSessions(root string, alive func(int) bool) ([]Session, error) {
 	dir := filepath.Join(root, "sessions")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -53,7 +57,7 @@ func ScanSessions(root string) ([]Session, error) {
 		if json.Unmarshal(data, &r) != nil {
 			continue
 		}
-		if !pidAlive(r.PID) {
+		if !alive(r.PID) {
 			continue
 		}
 		out = append(out, Session{

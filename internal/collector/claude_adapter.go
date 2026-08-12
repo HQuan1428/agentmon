@@ -1,0 +1,63 @@
+package collector
+
+import (
+	"agentmon/internal/procscan"
+)
+
+type ClaudeAdapter struct {
+	root    string
+	scanner *Scanner
+}
+
+func NewClaudeAdapter(root string) *ClaudeAdapter {
+	return &ClaudeAdapter{root: root, scanner: NewScanner()}
+}
+
+func (a *ClaudeAdapter) Agent() Agent { return AgentClaude }
+
+func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
+	sessions, err := scanSessions(a.root, snapshot.HasPID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sessions {
+		s := &sessions[i]
+		transcript := a.scanner.Scan(TranscriptPath(a.root, s.Cwd, s.ID))
+		s.Model = transcript.Model
+
+		if s.Kind == "bg" && s.jobID != "" {
+			if state, blocked, needs, done, total, ok := ParseJob(a.root, s.jobID); ok {
+				s.JobState, s.Blocked, s.NeedsHint, s.Done, s.Total = state, blocked, needs, done, total
+				if total > 0 {
+					s.Mode = Determinate
+				} else {
+					s.Mode = Indeterminate
+				}
+				normalizeClaudeSession(s)
+				continue
+			}
+		}
+
+		if transcript.HaveTodos {
+			s.Mode, s.Done, s.Total = Determinate, transcript.Done, transcript.Total
+		} else {
+			s.Mode = Indeterminate
+		}
+		s.Children = transcript.Children
+		normalizeClaudeSession(s)
+	}
+	return sessions, nil
+}
+
+func normalizeClaudeSession(session *Session) {
+	session.NativeID = session.ID
+	session.ID = GlobalID(AgentClaude, session.NativeID)
+	session.Agent = AgentClaude
+	for i := range session.Children {
+		child := &session.Children[i]
+		child.NativeID = child.ID
+		child.ID = session.ID + "/" + child.NativeID
+		child.Agent = AgentClaude
+		child.Model = ""
+	}
+}

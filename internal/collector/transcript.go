@@ -20,7 +20,10 @@ func TranscriptPath(root, cwd, sessionID string) string {
 
 // transcriptLine is the minimal shape we read from each JSONL line.
 type transcriptLine struct {
+	Type    string `json:"type"`
 	Message struct {
+		Role    string `json:"role"`
+		Model   string `json:"model"`
 		Content []struct {
 			Type      string          `json:"type"`
 			Name      string          `json:"name"`
@@ -129,6 +132,7 @@ func ParseSubagents(path string) []Session {
 type scanState struct {
 	offset    int64
 	haveTodos bool
+	model     string
 	done      int
 	total     int
 	order     []string
@@ -142,7 +146,15 @@ type Scanner struct {
 
 func NewScanner() *Scanner { return &Scanner{states: map[string]*scanState{}} }
 
-func (sc *Scanner) Scan(path string) (done, total int, todosFound bool, subs []Session) {
+type TranscriptSnapshot struct {
+	Done      int
+	Total     int
+	HaveTodos bool
+	Model     string
+	Children  []Session
+}
+
+func (sc *Scanner) Scan(path string) TranscriptSnapshot {
 	st := sc.states[path]
 	if st == nil {
 		st = &scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}}
@@ -150,14 +162,14 @@ func (sc *Scanner) Scan(path string) (done, total int, todosFound bool, subs []S
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return st.done, st.total, st.haveTodos, st.buildSubs()
+		return st.snapshot()
 	}
 	defer f.Close()
 	if info, err := f.Stat(); err == nil && info.Size() < st.offset {
 		*st = scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}} // rotated
 	}
 	if _, err := f.Seek(st.offset, io.SeekStart); err != nil {
-		return st.done, st.total, st.haveTodos, st.buildSubs()
+		return st.snapshot()
 	}
 	reader := bufio.NewReader(f)
 	for {
@@ -170,13 +182,26 @@ func (sc *Scanner) Scan(path string) (done, total int, todosFound bool, subs []S
 			break
 		}
 	}
-	return st.done, st.total, st.haveTodos, st.buildSubs()
+	return st.snapshot()
+}
+
+func (st *scanState) snapshot() TranscriptSnapshot {
+	return TranscriptSnapshot{
+		Done:      st.done,
+		Total:     st.total,
+		HaveTodos: st.haveTodos,
+		Model:     ModelOrUnknown(st.model),
+		Children:  st.buildSubs(),
+	}
 }
 
 func (st *scanState) apply(raw []byte) {
 	var line transcriptLine
 	if json.Unmarshal(raw, &line) != nil {
 		return
+	}
+	if line.Type == "assistant" && line.Message.Role == "assistant" && line.Message.Model != "" {
+		st.model = line.Message.Model
 	}
 	for _, c := range line.Message.Content {
 		switch {

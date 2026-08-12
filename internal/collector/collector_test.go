@@ -14,7 +14,8 @@ func TestCollectInteractiveWithTodosAndSubagent(t *testing.T) {
 	writeFile(t, filepath.Join(root, "sessions", "1.json"),
 		`{"pid":`+itoa(alive)+`,"sessionId":"sess1","cwd":"`+cwd+`","kind":"interactive","name":"work","status":"busy","updatedAt":5,"jobId":""}`)
 	tp := TranscriptPath(root, cwd, "sess1")
-	writeFile(t, tp, todoLine(`[{"content":"a","status":"completed","activeForm":"a"},{"content":"b","status":"pending","activeForm":"b"}]`)+"\n"+
+	writeFile(t, tp, modelLine("claude-opus-4-6")+"\n"+
+		todoLine(`[{"content":"a","status":"completed","activeForm":"a"},{"content":"b","status":"pending","activeForm":"b"}]`)+"\n"+
 		taskLine("B", "Review Task 1", "general-purpose")+"\n")
 
 	sessions, err := Collect(root, NewScanner())
@@ -25,7 +26,7 @@ func TestCollectInteractiveWithTodosAndSubagent(t *testing.T) {
 		t.Fatalf("want 1, got %d", len(sessions))
 	}
 	s := sessions[0]
-	if s.Mode != Determinate || s.Done != 1 || s.Total != 2 {
+	if s.Mode != Determinate || s.Done != 1 || s.Total != 2 || s.Model != "claude-opus-4-6" {
 		t.Errorf("progress wrong: mode=%v done=%d total=%d", s.Mode, s.Done, s.Total)
 	}
 	if len(s.Children) != 1 || s.Children[0].Name != "Review Task 1" {

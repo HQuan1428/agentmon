@@ -17,6 +17,26 @@ func todoLine(todos string) string {
 	return `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":` + todos + `}}]}}`
 }
 
+func modelLine(model string) string {
+	return `{"type":"assistant","message":{"role":"assistant","model":"` + model + `","content":[]}}`
+}
+
+func TestScannerCapturesModelFromCompleteLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.jsonl")
+	writeFile(t, path, modelLine("claude-opus-4-6")+"\n"+
+		`{"type":"user","message":{"role":"user","model":"not-a-runtime-model","content":[]}}`+"\n"+
+		modelLine("claude-sonnet-4-5"))
+
+	sc := NewScanner()
+	if got := sc.Scan(path); got.Model != "claude-opus-4-6" {
+		t.Fatalf("model after partial line=%q", got.Model)
+	}
+	appendFile(t, path, "\n")
+	if got := sc.Scan(path); got.Model != "claude-sonnet-4-5" {
+		t.Fatalf("model after completed line=%q", got.Model)
+	}
+}
+
 func TestParseTodosLastWins(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.jsonl")

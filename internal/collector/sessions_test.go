@@ -36,6 +36,20 @@ func TestScanSessionsFiltersDeadPIDs(t *testing.T) {
 	}
 }
 
+func TestScanSessionsUsesProvidedLiveness(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "sessions", "1.json"), `{"pid":77,"sessionId":"live","cwd":"/home/u/proj","kind":"interactive","name":"live-one","status":"busy","updatedAt":10,"jobId":""}`)
+	writeFile(t, filepath.Join(root, "sessions", "2.json"), `{"pid":88,"sessionId":"dead","cwd":"/home/u/proj","kind":"interactive","name":"dead-one","status":"busy","updatedAt":11,"jobId":""}`)
+
+	got, err := scanSessions(root, func(pid int) bool { return pid == 77 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "live" {
+		t.Fatalf("sessions=%+v", got)
+	}
+}
+
 func TestScanSessionsMissingDirIsEmpty(t *testing.T) {
 	got, err := ScanSessions(t.TempDir())
 	if err != nil {

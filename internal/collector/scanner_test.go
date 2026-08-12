@@ -20,17 +20,17 @@ func TestScannerIncrementalEqualsFull(t *testing.T) {
 	sc := NewScanner()
 	sc.Scan(path)
 	appendFile(t, path, chunk2)
-	done, total, found, subs := sc.Scan(path)
+	got := sc.Scan(path)
 
 	// Full: parse whole file fresh.
 	full := NewScanner()
-	fDone, fTotal, fFound, fSubs := full.Scan(path)
+	fullGot := full.Scan(path)
 
-	if done != fDone || total != fTotal || found != fFound {
-		t.Errorf("todos incremental=(%d,%d,%v) full=(%d,%d,%v)", done, total, found, fDone, fTotal, fFound)
+	if got.Done != fullGot.Done || got.Total != fullGot.Total || got.HaveTodos != fullGot.HaveTodos {
+		t.Errorf("todos incremental=%+v full=%+v", got, fullGot)
 	}
-	if len(subs) != len(fSubs) || len(subs) != 1 || !subs[0].IsDone() {
-		t.Errorf("subs incremental=%+v full=%+v", subs, fSubs)
+	if len(got.Children) != len(fullGot.Children) || len(got.Children) != 1 || !got.Children[0].IsDone() {
+		t.Errorf("subs incremental=%+v full=%+v", got.Children, fullGot.Children)
 	}
 }
 
