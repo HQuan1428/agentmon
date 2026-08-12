@@ -191,11 +191,15 @@ func loadOpenCodeState(ctx context.Context, db *sql.DB, records []OpenCodeRecord
 			records[i].Busy = message.Role == "assistant" && message.Time.Completed == nil && !hasJSONValue(message.Error)
 		}
 		providerID, modelID := message.runtimeModel()
-		if !seenModel[sessionID] && providerID != "" && modelID != "" {
+		if (message.Role == "assistant" || message.Role == "user") && !seenModel[sessionID] && providerID != "" && modelID != "" {
 			seenModel[sessionID] = true
 			records[i].ProviderID = providerID
 			records[i].ModelID = modelID
 		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
 	}
 	if err := rows.Close(); err != nil {
 		return err
