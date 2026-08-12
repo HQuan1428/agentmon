@@ -186,7 +186,7 @@ func TestOpenCodeAdapterQueriesStatusIDsAndUsesXDGRoot(t *testing.T) {
 	port, _ := strconv.Atoi(portText)
 	store := &fakeOpenCodeStore{byIDs: []OpenCodeRecord{
 		{ID: "ses_parent", Directory: "/work/p", ProviderID: "anthropic", ModelID: "claude-sonnet-4-5"},
-		{ID: "ses_child", ParentID: "ses_parent", Directory: "/work/p"},
+		{ID: "ses_child", ParentID: "ses_parent", Directory: "/work/p", Todos: []OpenCodeTodo{{Status: "pending"}}},
 	}}
 	adapter := NewOpenCodeAdapter(t.TempDir())
 	var databasePath string
@@ -209,12 +209,25 @@ func TestOpenCodeAdapterQueriesStatusIDsAndUsesXDGRoot(t *testing.T) {
 	if !reflect.DeepEqual(store.ids, []string{"ses_child", "ses_parent"}) {
 		t.Fatalf("ByIDs=%v", store.ids)
 	}
-	if len(rows) != 1 || rows[0].Status != "busy" || len(rows[0].Children) != 1 || rows[0].Children[0].Status != "idle" {
+	if len(rows) != 1 || rows[0].Status != "busy" || len(rows[0].Children) != 1 || rows[0].Children[0].Status != "idle" || !rows[0].Children[0].IsDone() {
 		t.Fatalf("sessions=%+v", rows)
 	}
 	probe := adapter.probe.(*LoopbackOpenCodeProbe)
 	if probe.Client.Timeout != 150*time.Millisecond {
 		t.Fatalf("timeout=%s", probe.Client.Timeout)
+	}
+}
+
+func TestOpenCodeExplicitStatusOverridesTodoProgress(t *testing.T) {
+	process := procscan.Process{PID: 42, Cwd: "/work/p"}
+	pending := OpenCodeRecord{ID: "ses_idle", Directory: "/work/p", Todos: []OpenCodeTodo{{Status: "pending"}}}
+	completed := OpenCodeRecord{ID: "ses_busy", Directory: "/work/p", Todos: []OpenCodeTodo{{Status: "completed"}}}
+
+	if idle := openCodeSession(process, pending, "idle"); !idle.IsDone() {
+		t.Fatalf("explicit idle with pending todos must be done: %+v", idle)
+	}
+	if busy := openCodeSession(process, completed, "busy"); busy.IsDone() {
+		t.Fatalf("explicit busy with completed todos must stay busy: %+v", busy)
 	}
 }
 

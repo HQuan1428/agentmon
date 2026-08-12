@@ -73,10 +73,14 @@ func (s Session) IsDone() bool {
 		return false
 	case s.JobState == "done" || s.JobState == "idle":
 		return true
+	case s.Status == "idle":
+		return true
+	case s.Status == "busy":
+		return false
 	case s.Mode == Determinate:
 		return s.Total > 0 && s.Done >= s.Total
 	default:
-		return s.Status == "idle"
+		return false
 	}
 }
 

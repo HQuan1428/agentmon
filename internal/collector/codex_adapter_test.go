@@ -135,6 +135,44 @@ func TestCodexAdapterRetainsCompletedSessionForFourSeconds(t *testing.T) {
 	}
 }
 
+func TestCodexAdapterPrunesRolloutStateAfterExitGrace(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".codex")
+	path := filepath.Join(root, "sessions", "2026", "08", "12", "rollout-done.jsonl")
+	writeFile(t, path, strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"done-session","cwd":"/work/project"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}`,
+	}, "\n")+"\n")
+	adapter := NewCodexAdapter(root)
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	adapter.now = func() time.Time { return now }
+	live := procscan.Snapshot{Processes: []procscan.Process{{
+		PID: 42, StartTicks: 100, Comm: "codex", Cwd: "/work/project",
+		Files: []procscan.OpenFile{{FD: 7, Path: path}},
+	}}}
+
+	if rows, err := adapter.Discover(live); err != nil || len(rows) != 1 || !rows[0].IsDone() {
+		t.Fatalf("completed rows=%+v err=%v", rows, err)
+	}
+	if len(adapter.scanner.states) != 1 {
+		t.Fatalf("scanner states after completion=%d", len(adapter.scanner.states))
+	}
+	now = now.Add(4 * time.Second)
+	if rows, err := adapter.Discover(procscan.Snapshot{}); err != nil || len(rows) != 1 || !rows[0].IsDone() {
+		t.Fatalf("exit grace rows=%+v err=%v", rows, err)
+	}
+	if len(adapter.scanner.states) != 1 {
+		t.Fatalf("scanner pruned before grace elapsed: %d", len(adapter.scanner.states))
+	}
+	now = now.Add(time.Nanosecond)
+	if rows, err := adapter.Discover(procscan.Snapshot{}); err != nil || len(rows) != 0 {
+		t.Fatalf("after exit grace rows=%+v err=%v", rows, err)
+	}
+	if len(adapter.scanner.states) != 0 {
+		t.Fatalf("scanner retained expired rollout %q", path)
+	}
+}
+
 func TestCodexAdapterPrunesCompletedSessionWhenPIDIsReused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".codex")
 	path := filepath.Join(root, "sessions", "2026", "08", "12", "rollout-old.jsonl")

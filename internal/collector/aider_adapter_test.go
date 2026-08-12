@@ -82,7 +82,7 @@ func TestAiderAdapterFailsClosedForSharedDefaultHistory(t *testing.T) {
 	input := filepath.Join(cwd, ".aider.input.history")
 	chat := filepath.Join(cwd, ".aider.chat.history.md")
 	writeFile(t, input, "# old\n+write code\n\n")
-	writeFile(t, chat, "#### assistant\ndone\n")
+	writeFile(t, chat, "#### write code\n\ndone\n\n")
 
 	rows, err := NewAiderAdapter(home).Discover(procscan.Snapshot{UID: 1000, Processes: []procscan.Process{
 		{PID: 10, UID: 1000, StartTicks: 10, Comm: "aider", Exe: "/usr/bin/aider", Args: []string{"aider", "--model=sonnet"}, Cwd: cwd},
@@ -104,7 +104,7 @@ func TestAiderAdapterFailsClosedWhenProcessesShareOpenHistory(t *testing.T) {
 	input := filepath.Join(cwd, ".aider.input.history")
 	chat := filepath.Join(cwd, ".aider.chat.history.md")
 	writeFile(t, input, "# old\n+write code\n\n")
-	writeFile(t, chat, "#### assistant\ndone\n")
+	writeFile(t, chat, "#### write code\n\ndone\n\n")
 	files := []procscan.OpenFile{{FD: 7, Path: input}, {FD: 8, Path: chat}}
 
 	rows, err := NewAiderAdapter(home).Discover(procscan.Snapshot{UID: 1000, Processes: []procscan.Process{
@@ -150,7 +150,7 @@ func TestAiderAdapterExpiresDoneRowAndRejectsPIDReuse(t *testing.T) {
 	input := filepath.Join(cwd, ".aider.input.history")
 	chat := filepath.Join(cwd, ".aider.chat.history.md")
 	writeFile(t, input, "# old\n+write code\n\n")
-	writeFile(t, chat, "#### assistant\ndone\n")
+	writeFile(t, chat, "#### write code\n\ndone\n\n")
 	old := time.Unix(1, 0)
 	newer := time.Unix(2, 0)
 	if err := os.Chtimes(input, old, old); err != nil {
@@ -202,7 +202,7 @@ func TestAiderAdapterClearsDoneStateWhenHistoryDisappears(t *testing.T) {
 	input := filepath.Join(cwd, ".aider.input.history")
 	chat := filepath.Join(cwd, ".aider.chat.history.md")
 	writeFile(t, input, "# old\n+/model sonnet\n\n# old\n+write code\n\n")
-	writeFile(t, chat, "#### assistant\ndone\n")
+	writeFile(t, chat, "#### write code\n\ndone\n\n")
 	old := time.Unix(1, 0)
 	newer := time.Unix(2, 0)
 	if err := os.Chtimes(input, old, old); err != nil {

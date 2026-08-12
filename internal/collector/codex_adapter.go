@@ -22,6 +22,7 @@ type CodexAdapter struct {
 type recentSession struct {
 	Row        Session
 	ParentID   string
+	SourcePath string
 	StartTicks uint64
 	ExpiresAt  time.Time
 }
@@ -45,6 +46,7 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 	instances := make(map[int]uint64)
 	attributed := make(map[int]bool)
 	emitted := make(map[int]bool)
+	livePaths := make(map[string]struct{})
 	observed := make(map[string]codexObservedSession)
 	var processes []procscan.Process
 
@@ -58,6 +60,7 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 			if !a.isRolloutPath(file.Path) {
 				continue
 			}
+			livePaths[file.Path] = struct{}{}
 			rollout := a.scanner.Scan(file.Path)
 			if strings.TrimSpace(rollout.NativeID) == "" {
 				continue
@@ -74,7 +77,7 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 				if !ok || recent.StartTicks != process.StartTicks {
 					recent.ExpiresAt = now.Add(codexRecentDuration)
 				}
-				recent.Row, recent.ParentID, recent.StartTicks = row, entry.ParentID, process.StartTicks
+				recent.Row, recent.ParentID, recent.SourcePath, recent.StartTicks = row, entry.ParentID, file.Path, process.StartTicks
 				a.recent[row.ID] = recent
 				if now.After(recent.ExpiresAt) {
 					continue
@@ -90,15 +93,17 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 
 	for id, recent := range a.recent {
 		startTicks, alive := instances[recent.Row.PID]
-		if !alive || startTicks != recent.StartTicks || now.After(recent.ExpiresAt) {
+		if (alive && startTicks != recent.StartTicks) || now.After(recent.ExpiresAt) {
 			delete(a.recent, id)
 			continue
 		}
+		livePaths[recent.SourcePath] = struct{}{}
 		if _, exists := observed[recent.Row.NativeID]; !exists {
 			observed[recent.Row.NativeID] = codexObservedSession{Row: recent.Row, ParentID: recent.ParentID}
 			emitted[recent.Row.PID] = true
 		}
 	}
+	a.scanner.Prune(livePaths)
 
 	rows := buildCodexTree(observed)
 	for _, process := range processes {

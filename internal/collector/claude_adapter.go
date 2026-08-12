@@ -20,9 +20,12 @@ func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) 
 	if err != nil {
 		return nil, err
 	}
+	live := make(map[string]struct{}, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
-		transcript := a.scanner.Scan(TranscriptPath(a.root, s.Cwd, s.ID))
+		path := TranscriptPath(a.root, s.Cwd, s.ID)
+		live[path] = struct{}{}
+		transcript := a.scanner.Scan(path)
 		s.Model = transcript.Model
 
 		if s.Kind == "bg" && s.jobID != "" {
@@ -46,6 +49,7 @@ func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) 
 		s.Children = transcript.Children
 		normalizeClaudeSession(s)
 	}
+	a.scanner.Prune(live)
 	return sessions, nil
 }
 

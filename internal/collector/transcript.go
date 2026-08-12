@@ -146,6 +146,14 @@ type Scanner struct {
 
 func NewScanner() *Scanner { return &Scanner{states: map[string]*scanState{}} }
 
+func (sc *Scanner) Prune(live map[string]struct{}) {
+	for path := range sc.states {
+		if _, ok := live[path]; !ok {
+			delete(sc.states, path)
+		}
+	}
+}
+
 type TranscriptSnapshot struct {
 	Done      int
 	Total     int

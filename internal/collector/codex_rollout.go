@@ -41,6 +41,14 @@ func NewCodexScanner() *CodexScanner {
 	return &CodexScanner{states: map[string]*codexRolloutState{}}
 }
 
+func (sc *CodexScanner) Prune(live map[string]struct{}) {
+	for path := range sc.states {
+		if _, ok := live[path]; !ok {
+			delete(sc.states, path)
+		}
+	}
+}
+
 func (sc *CodexScanner) Scan(path string) CodexRolloutSnapshot {
 	st := sc.states[path]
 	if st == nil {

@@ -35,6 +35,21 @@ func TestDiffEventsNoRepeat(t *testing.T) {
 	}
 }
 
+func TestDiffEventsNewDoneIDDoesNotComplete(t *testing.T) {
+	prev := []collector.Session{{
+		ID: "codex:pid:42", NativeID: "pid:42", Agent: collector.AgentCodex,
+		Mode: collector.Indeterminate, Status: "busy",
+	}}
+	cur := []collector.Session{{
+		ID: "codex:session-1", NativeID: "session-1", Agent: collector.AgentCodex,
+		Mode: collector.Indeterminate, Status: "idle",
+	}}
+
+	if events := DiffEvents(prev, cur); len(events) != 0 {
+		t.Fatalf("new already-done identity must not emit completion: %v", events)
+	}
+}
+
 func TestDiffEventsChildDone(t *testing.T) {
 	prev := []collector.Session{{ID: "p", Status: "busy", Mode: collector.Indeterminate,
 		Children: []collector.Session{{ID: "c", Mode: collector.Indeterminate, Status: "busy"}}}}

@@ -27,9 +27,12 @@ type aiderHistoryTail struct {
 }
 
 type aiderHistoryState struct {
-	input    aiderHistoryTail
-	chat     aiderHistoryTail
-	snapshot AiderHistorySnapshot
+	input            aiderHistoryTail
+	chat             aiderHistoryTail
+	chatPromptOpen   bool
+	chatPromptEnded  bool
+	chatResponseSeen bool
+	snapshot         AiderHistorySnapshot
 }
 
 type AiderHistoryScanner struct {
@@ -175,9 +178,27 @@ func (state *aiderHistoryState) scanChat(path string) bool {
 			return err == io.EOF
 		}
 		state.chat.offset += int64(len(raw))
-		if strings.TrimSpace(raw) == "#### assistant" && state.snapshot.Busy {
-			state.snapshot.Busy = false
-			state.snapshot.Done = true
+		line := strings.TrimSpace(raw)
+		switch {
+		case strings.HasPrefix(line, "#### ") && strings.TrimSpace(strings.TrimPrefix(line, "#### ")) != "":
+			state.chatPromptOpen = true
+			state.chatPromptEnded = false
+			state.chatResponseSeen = false
+			state.snapshot.Busy = true
+			state.snapshot.Done = false
+		case line == "":
+			if state.chatPromptOpen && !state.chatPromptEnded {
+				state.chatPromptEnded = true
+			} else if state.chatPromptOpen && state.chatResponseSeen {
+				state.chatPromptOpen = false
+				state.snapshot.Busy = false
+				state.snapshot.Done = true
+			}
+		case strings.HasPrefix(line, "#") || strings.HasPrefix(line, "<!--"):
+		default:
+			if state.chatPromptOpen && state.chatPromptEnded {
+				state.chatResponseSeen = true
+			}
 		}
 	}
 }

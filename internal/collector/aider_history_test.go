@@ -12,7 +12,7 @@ func TestAiderHistoryReducesLifecycleAndRuntimeModel(t *testing.T) {
 	input := filepath.Join(dir, ".aider.input.history")
 	chat := filepath.Join(dir, ".aider.chat.history.md")
 	writeFile(t, input, "# 2026-08-12 10:00:00\n+write the tests\n\n")
-	writeFile(t, chat, "#### user\nold request\n\n#### assistant\nold answer\n")
+	writeFile(t, chat, "#### write the tests\n\nold answer\n\n")
 	old := time.Unix(1, 0)
 	newer := time.Unix(2, 0)
 	if err := os.Chtimes(input, old, old); err != nil {
@@ -32,7 +32,7 @@ func TestAiderHistoryReducesLifecycleAndRuntimeModel(t *testing.T) {
 		t.Fatalf("submitted turn=%+v", got)
 	}
 
-	appendFile(t, chat, "\n#### user\nfix the parser\n\n#### assistant\nfixed\n")
+	appendFile(t, chat, "#### fix the parser\n\nfixed\n\n")
 	if got := scanner.Scan(input, chat, true); got.Busy || !got.Done {
 		t.Fatalf("assistant completion=%+v", got)
 	}
@@ -65,13 +65,21 @@ func TestAiderHistoryWaitsForCompleteEntriesAndLines(t *testing.T) {
 		t.Fatalf("complete input=%+v", got)
 	}
 
-	appendFile(t, chat, "#### assistant")
+	appendFile(t, chat, "<!-- aider chat started -->\n#### assistant\n#### unfinished request\n#### next prompt\ncontinued prompt\n\n")
 	if got := scanner.Scan(input, chat, true); !got.Busy || got.Done {
-		t.Fatalf("partial assistant heading=%+v", got)
+		t.Fatalf("markers and prompt headings=%+v", got)
 	}
-	appendFile(t, chat, "\nanswer\n")
+	appendFile(t, chat, "answer")
+	if got := scanner.Scan(input, chat, true); !got.Busy || got.Done {
+		t.Fatalf("partial response bytes=%+v", got)
+	}
+	appendFile(t, chat, "\n")
+	if got := scanner.Scan(input, chat, true); !got.Busy || got.Done {
+		t.Fatalf("response without terminal blank line=%+v", got)
+	}
+	appendFile(t, chat, "\n")
 	if got := scanner.Scan(input, chat, true); got.Busy || !got.Done {
-		t.Fatalf("complete assistant heading=%+v", got)
+		t.Fatalf("complete assistant response block=%+v", got)
 	}
 }
 
@@ -80,7 +88,7 @@ func TestAiderHistoryKeepsNewerSubmittedInputBusyOnColdStart(t *testing.T) {
 	input := filepath.Join(dir, "input.history")
 	chat := filepath.Join(dir, "chat.md")
 	writeFile(t, input, "# new\n+new request\n\n")
-	writeFile(t, chat, "#### user\nold request\n\n#### assistant\nold answer\n")
+	writeFile(t, chat, "#### old request\n\nold answer\n\n")
 	old := time.Unix(1, 0)
 	newer := time.Unix(2, 0)
 	if err := os.Chtimes(chat, old, old); err != nil {
@@ -198,7 +206,7 @@ func TestAiderHistoryFailsClosedWhenHistoryIsAmbiguous(t *testing.T) {
 	input := filepath.Join(dir, "input.history")
 	chat := filepath.Join(dir, "chat.md")
 	writeFile(t, input, "# now\n+/model sonnet\n\n# now\n+write code\n\n")
-	writeFile(t, chat, "#### assistant\ndone\n")
+	writeFile(t, chat, "#### write code\n\ndone\n\n")
 
 	scanner := NewAiderHistoryScanner()
 	if got := scanner.Scan(input, chat, false); got.Busy || got.Done || got.RuntimeModel != "" {

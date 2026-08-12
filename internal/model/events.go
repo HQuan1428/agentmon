@@ -44,9 +44,9 @@ func DiffEvents(prev, cur []collector.Session) []Event {
 
 	var evs []Event
 	for _, s := range flattenOrder(cur) {
-		p := prevMap[s] // zero value if absent: {false,false}
+		p, existed := prevMap[s]
 		c := curMap[s]
-		if !p.done && c.done {
+		if existed && !p.done && c.done {
 			evs = append(evs, Event{Kind: DoneEvent, SessionID: s})
 		}
 		if !p.blocked && c.blocked {

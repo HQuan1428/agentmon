@@ -66,6 +66,29 @@ func TestClaudeAdapterOmitsDeadPID(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapterPrunesTranscriptStateAfterSessionExit(t *testing.T) {
+	root := t.TempDir()
+	cwd := "/home/u/proj"
+	writeFile(t, filepath.Join(root, "sessions", "1.json"),
+		`{"pid":77,"sessionId":"sess1","cwd":"`+cwd+`","kind":"interactive","name":"work","status":"busy","updatedAt":5}`)
+	path := TranscriptPath(root, cwd, "sess1")
+	writeFile(t, path, modelLine("claude-opus-4-6")+"\n")
+	adapter := NewClaudeAdapter(root)
+
+	if _, err := adapter.Discover(procscan.Snapshot{Processes: []procscan.Process{{PID: 77}}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.scanner.states) != 1 {
+		t.Fatalf("scanner states after live session=%d", len(adapter.scanner.states))
+	}
+	if _, err := adapter.Discover(procscan.Snapshot{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.scanner.states) != 0 {
+		t.Fatalf("scanner retained exited transcript %q", path)
+	}
+}
+
 func TestClaudeAdapterPreservesBlockedBackgroundState(t *testing.T) {
 	root := t.TempDir()
 	cwd := "/home/u/proj"

@@ -37,6 +37,27 @@ func TestApplyPollFiresEvents(t *testing.T) {
 	}
 }
 
+func TestApplyPollOpenCodeIdleWithPendingTodosCompletes(t *testing.T) {
+	m := New(fakeCollectionSource{}, nil, time.Second)
+	m.seeded = true
+	m.sessions = []collector.Session{{
+		ID: "opencode:ses_1", NativeID: "ses_1", Agent: collector.AgentOpenCode, Status: "busy",
+		Mode: collector.Determinate, Done: 1, Total: 1,
+	}}
+
+	next := []collector.Session{{
+		ID: "opencode:ses_1", NativeID: "ses_1", Agent: collector.AgentOpenCode, Status: "idle",
+		Mode: collector.Determinate, Done: 0, Total: 1,
+	}}
+	m, events := m.applyPoll(next)
+	if len(events) != 1 || events[0].Kind != DoneEvent || events[0].SessionID != "opencode:ses_1" {
+		t.Fatalf("idle lifecycle events=%v", events)
+	}
+	if !m.sessions[0].IsDone() {
+		t.Fatalf("idle session not done: %+v", m.sessions[0])
+	}
+}
+
 func TestApplyPollFirstPollNoChime(t *testing.T) {
 	m := New(fakeCollectionSource{}, nil, time.Second)
 	sessions := []collector.Session{
