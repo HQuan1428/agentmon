@@ -76,6 +76,40 @@ func TestProcFSSnapshotReturnsNoArgsForEmptyCmdline(t *testing.T) {
 	}
 }
 
+func TestProcFSSnapshotExcludesInactiveProcessStates(t *testing.T) {
+	root := t.TempDir()
+	for i, state := range []string{"T", "t", "Z", "X", "x"} {
+		pid := 101 + i
+		writeProc(t, root, pid, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+		setProcState(t, root, pid, state)
+	}
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Processes) != 0 {
+		t.Fatalf("processes=%+v", snap.Processes)
+	}
+}
+
+func TestProcFSSnapshotRetainsActiveAndWaitingStates(t *testing.T) {
+	root := t.TempDir()
+	for i, state := range []string{"R", "S", "D", "I"} {
+		pid := 101 + i
+		writeProc(t, root, pid, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
+		setProcState(t, root, pid, state)
+	}
+
+	snap, err := (&ProcFS{Root: root, UID: 1000}).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Processes) != 4 {
+		t.Fatalf("processes=%+v", snap.Processes)
+	}
+}
+
 func TestProcFSRejectsOtherUIDBeforeProcessMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeProc(t, root, 101, 1000, 1000, "codex", []string{"codex"}, "/work/a", nil)
@@ -239,6 +273,25 @@ func writeProc(t *testing.T, root string, pid int, realUID, effectiveUID uint32,
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join("/usr/bin", comm), filepath.Join(dir, "exe")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setProcState(t *testing.T, root string, pid int, state string) {
+	t.Helper()
+	if state == "S" {
+		return
+	}
+	path := filepath.Join(root, strconv.Itoa(pid), "stat")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), ") S ", ") "+state+" ", 1)
+	if updated == string(data) {
+		t.Fatalf("stat fixture missing state: %q", data)
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

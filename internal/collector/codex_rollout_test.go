@@ -44,6 +44,33 @@ func TestCodexScannerAbortedTurnIsDone(t *testing.T) {
 	}
 }
 
+func TestCodexScannerSupersedesStaleStartedTurns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	writeFile(t, path, strings.Join([]string{
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"stale-turn"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"current-turn"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"stale-turn"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"current-turn"}}`,
+	}, "\n")+"\n")
+
+	if got := NewCodexScanner().Scan(path); got.Busy || !got.Done {
+		t.Fatalf("snapshot=%+v", got)
+	}
+}
+
+func TestCodexScannerReopensAfterCompletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	writeFile(t, path, strings.Join([]string{
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"}}`,
+	}, "\n")+"\n")
+
+	if got := NewCodexScanner().Scan(path); !got.Busy || got.Done {
+		t.Fatalf("snapshot=%+v", got)
+	}
+}
+
 func TestCodexScannerFailsClosedForMalformedAndPartialRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	writeFile(t, path, strings.Join([]string{

@@ -60,9 +60,12 @@ func (p *ProcFS) readOwnedProcess(pid int) (Process, bool, error) {
 
 func (p *ProcFS) readProcess(pid int, uid uint32) (Process, error) {
 	dir := filepath.Join(p.Root, strconv.Itoa(pid))
-	ppid, startTicks, err := readStat(filepath.Join(dir, "stat"))
+	state, ppid, startTicks, err := readStat(filepath.Join(dir, "stat"))
 	if err != nil {
 		return Process{}, err
+	}
+	if strings.Contains("TtZXx", state) {
+		return Process{}, fmt.Errorf("inactive process state %q", state)
 	}
 	comm, err := readTrimmed(filepath.Join(dir, "comm"))
 	if err != nil {
@@ -237,29 +240,29 @@ func readEffectiveUID(path string) (uint32, error) {
 	return 0, fmt.Errorf("effective UID missing from %s", path)
 }
 
-func readStat(path string) (int, uint64, error) {
+func readStat(path string) (string, int, uint64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 	stat := strings.TrimSpace(string(data))
 	closeComm := strings.LastIndex(stat, ")")
 	if closeComm == -1 || closeComm+1 >= len(stat) {
-		return 0, 0, fmt.Errorf("malformed stat %s", path)
+		return "", 0, 0, fmt.Errorf("malformed stat %s", path)
 	}
 	fields := strings.Fields(stat[closeComm+1:])
-	if len(fields) < 20 {
-		return 0, 0, fmt.Errorf("malformed stat %s", path)
+	if len(fields) < 20 || len(fields[0]) != 1 {
+		return "", 0, 0, fmt.Errorf("malformed stat %s", path)
 	}
 	ppid, err := strconv.Atoi(fields[1])
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
-	return ppid, startTicks, nil
+	return fields[0], ppid, startTicks, nil
 }
 
 func readTrimmed(path string) (string, error) {

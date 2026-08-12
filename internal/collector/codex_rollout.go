@@ -29,7 +29,7 @@ type codexRolloutState struct {
 	anchor      []byte
 	tailAnchor  []byte
 	meta        CodexRolloutSnapshot
-	openTurns   map[string]bool
+	currentTurn string
 	hasTerminal bool
 }
 
@@ -89,7 +89,7 @@ func (sc *CodexScanner) Scan(path string) CodexRolloutSnapshot {
 }
 
 func newCodexRolloutState() *codexRolloutState {
-	return &codexRolloutState{openTurns: map[string]bool{}}
+	return &codexRolloutState{}
 }
 
 func (st *codexRolloutState) mustReset(f *os.File, info os.FileInfo) bool {
@@ -134,7 +134,7 @@ func matchesCodexAnchor(f *os.File, offset int64, anchor []byte) bool {
 
 func (st *codexRolloutState) snapshot() CodexRolloutSnapshot {
 	snapshot := st.meta
-	snapshot.Busy = len(st.openTurns) > 0
+	snapshot.Busy = st.currentTurn != ""
 	snapshot.Done = st.hasTerminal && !snapshot.Busy
 	return snapshot
 }
@@ -207,12 +207,12 @@ func (st *codexRolloutState) apply(raw []byte) {
 		}
 		switch *payload.Type {
 		case "task_started":
-			st.openTurns[*payload.TurnID] = true
+			st.currentTurn = *payload.TurnID
 		case "task_complete", "task_aborted":
-			if !st.openTurns[*payload.TurnID] {
+			if st.currentTurn != *payload.TurnID {
 				return
 			}
-			delete(st.openTurns, *payload.TurnID)
+			st.currentTurn = ""
 			st.hasTerminal = true
 		}
 	}
