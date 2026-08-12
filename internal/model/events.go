@@ -1,6 +1,16 @@
 package model
 
-import "agentmon/internal/collector"
+import (
+	"agentmon/internal/collector"
+	"agentmon/internal/render"
+)
+
+// attention is true when a session needs the user (idle waiting, or task done)
+// — the transition into it rings the chime.
+func attention(s collector.Session) bool {
+	st := render.StateOf(s)
+	return st == render.StateIdle || st == render.StateDone
+}
 
 type EventKind int
 
@@ -15,8 +25,8 @@ type Event struct {
 }
 
 type flatState struct {
-	done    bool
-	blocked bool
+	attention bool
+	blocked   bool
 }
 
 func flatten(sessions []collector.Session, into map[string]flatState) {
@@ -29,7 +39,7 @@ func flattenWithAgent(sessions []collector.Session, into map[string]flatState, p
 		if agent == "" {
 			agent = parentAgent
 		}
-		into[sessionID(s, agent)] = flatState{done: s.IsDone(), blocked: s.Blocked}
+		into[sessionID(s, agent)] = flatState{attention: attention(s), blocked: s.Blocked}
 		if len(s.Children) > 0 {
 			flattenWithAgent(s.Children, into, agent)
 		}
@@ -46,7 +56,7 @@ func DiffEvents(prev, cur []collector.Session) []Event {
 	for _, s := range flattenOrder(cur) {
 		p, existed := prevMap[s]
 		c := curMap[s]
-		if existed && !p.done && c.done {
+		if existed && !p.attention && c.attention {
 			evs = append(evs, Event{Kind: DoneEvent, SessionID: s})
 		}
 		if !p.blocked && c.blocked {

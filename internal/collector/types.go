@@ -62,6 +62,7 @@ type Session struct {
 	Total     int
 	Blocked   bool
 	NeedsHint string
+	Exited    bool   // set by the model for a session whose process just went away
 	jobID     string // bg jobId, used to locate jobs/<jobID>/state.json
 	Children  []Session
 	UpdatedAt int64

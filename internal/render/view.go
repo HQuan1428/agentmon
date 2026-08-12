@@ -38,6 +38,8 @@ var (
 	statusSweep      = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
 	statusDone       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)  // ✓ DONE
 	statusBlocked    = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true) // ⏸ BLOCKED
+	statusIdle       = lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true) // ● IDLE
+	statusExit       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))            // ✕ EXIT
 )
 
 // BodyLines renders the session table as individual lines (no column header,
@@ -170,26 +172,27 @@ func progressCell(s collector.Session, phase int, layout Layout) string {
 // tasksText is the TASKS column: a fraction when known, DONE when finished,
 // or a dash for indeterminate work with no task count.
 func tasksText(s collector.Session) string {
-	if s.Mode == collector.Determinate && s.Total > 0 {
-		if s.IsDone() {
-			return "DONE"
-		}
-		return fmt.Sprintf("%d/%d", s.Done, s.Total)
-	}
-	if s.IsDone() {
+	if StateOf(s) == StateDone {
 		return "DONE"
+	}
+	if s.Mode == collector.Determinate && s.Total > 0 {
+		return fmt.Sprintf("%d/%d", s.Done, s.Total)
 	}
 	return "--"
 }
 
 // statusText is the STATUS column: an icon plus an uppercase word.
 func statusText(s collector.Session) string {
-	switch {
-	case s.Blocked:
+	switch StateOf(s) {
+	case StateBlocked:
 		return "⏸ BLOCKED"
-	case s.IsDone():
+	case StateExit:
+		return "✕ EXIT"
+	case StateDone:
 		return "✓ DONE"
-	case s.Mode == collector.Determinate:
+	case StateIdle:
+		return "● IDLE"
+	case StateBusy:
 		return "⚡ BUSY"
 	default:
 		return "🔄 SWEEP"
@@ -197,12 +200,16 @@ func statusText(s collector.Session) string {
 }
 
 func statusStyle(s collector.Session) lipgloss.Style {
-	switch {
-	case s.Blocked:
+	switch StateOf(s) {
+	case StateBlocked:
 		return statusBlocked
-	case s.IsDone():
+	case StateExit:
+		return statusExit
+	case StateDone:
 		return statusDone
-	case s.Mode == collector.Determinate:
+	case StateIdle:
+		return statusIdle
+	case StateBusy:
 		return statusBusy
 	default:
 		return statusSweep

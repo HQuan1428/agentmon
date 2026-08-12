@@ -26,9 +26,9 @@ func TestPollCmdUsesNormalizedSource(t *testing.T) {
 
 func TestApplyPollFiresEvents(t *testing.T) {
 	m := New(fakeCollectionSource{}, nil, time.Second)
-	m.sessions = []collector.Session{{ID: "a", Mode: collector.Determinate, Done: 6, Total: 10}}
+	m.sessions = []collector.Session{{ID: "a", Status: "busy", Mode: collector.Determinate, Done: 6, Total: 10}}
 	m.seeded = true
-	m2, evs := m.applyPoll([]collector.Session{{ID: "a", Mode: collector.Determinate, Done: 10, Total: 10}})
+	m2, evs := m.applyPoll([]collector.Session{{ID: "a", Status: "idle", Mode: collector.Determinate, Done: 10, Total: 10}})
 	if len(evs) != 1 || evs[0].Kind != DoneEvent {
 		t.Fatalf("want one DoneEvent, got %v", evs)
 	}
@@ -92,58 +92,70 @@ func idle(id string) collector.Session {
 	return collector.Session{ID: id, Name: "worker", Project: "p", Mode: collector.Indeterminate, Status: "idle"}
 }
 
-func TestDoneWithinGraceVisibleAndDimmed(t *testing.T) {
+func TestOpenIdleStaysVisibleNotDimmed(t *testing.T) {
 	t0 := time.Unix(1000, 0)
 	m := seededModelAt(t0)
 	m.sessions = []collector.Session{busy("a")}
-	m, _ = m.applyPoll([]collector.Session{idle("a")}) // just went done at t0
+	m, evs := m.applyPoll([]collector.Session{idle("a")}) // stopped, still open
+	if len(evs) != 1 || evs[0].Kind != DoneEvent {
+		t.Fatalf("busy→idle should chime once: %v", evs)
+	}
+	m.nowFn = func() time.Time { return t0.Add(10 * time.Second) } // long after old grace
 	out := m.View()
 	if !strings.Contains(out, "worker") {
-		t.Fatalf("done session should stay visible within grace:\n%s", out)
-	}
-	if !strings.Contains(out, "\x1b[2m") {
-		t.Fatalf("done-within-grace row should be dimmed:\n%q", out)
-	}
-}
-
-func TestDonePastGraceHidden(t *testing.T) {
-	t0 := time.Unix(1000, 0)
-	m := seededModelAt(t0)
-	m.sessions = []collector.Session{busy("a")}
-	m, _ = m.applyPoll([]collector.Session{idle("a")})
-	m.nowFn = func() time.Time { return t0.Add(graceDuration + time.Second) }
-	out := m.View()
-	if strings.Contains(out, "worker") {
-		t.Fatalf("done session past grace should be hidden:\n%s", out)
-	}
-}
-
-func TestDoneThenBusyAgainVisibleNotDimmed(t *testing.T) {
-	t0 := time.Unix(1000, 0)
-	m := seededModelAt(t0)
-	m.sessions = []collector.Session{busy("a")}
-	m, _ = m.applyPoll([]collector.Session{idle("a")}) // done
-	m, _ = m.applyPoll([]collector.Session{busy("a")}) // working again
-	out := m.View()
-	if !strings.Contains(out, "worker") {
-		t.Fatalf("re-busy session should be visible:\n%s", out)
+		t.Fatalf("open idle session must stay visible:\n%s", out)
 	}
 	if strings.Contains(out, "\x1b[2m") {
-		t.Fatalf("re-busy session should not be dimmed:\n%q", out)
+		t.Fatalf("open session must not be dimmed:\n%q", out)
 	}
 }
 
-func TestFirstPollDoneHiddenImmediately(t *testing.T) {
+func TestExitGhostShowsThenDisappears(t *testing.T) {
 	t0 := time.Unix(1000, 0)
-	m := New(fakeCollectionSource{}, nil, time.Second)
-	m.nowFn = func() time.Time { return t0 }
-	m, evs := m.applyPoll([]collector.Session{idle("a")})
-	if len(evs) != 0 {
-		t.Fatalf("first poll must not fire events, got %v", evs)
-	}
+	m := seededModelAt(t0)
+	m.sessions = []collector.Session{busy("a")}
+	m, _ = m.applyPoll([]collector.Session{}) // session gone from poll → EXIT ghost
 	out := m.View()
-	if strings.Contains(out, "worker") {
-		t.Fatalf("already-done session at startup should be hidden, not granted grace:\n%s", out)
+	if !strings.Contains(out, "worker") || !strings.Contains(out, "EXIT") {
+		t.Fatalf("exited session should show EXIT within 3s:\n%s", out)
+	}
+	if !strings.Contains(out, "\x1b[2m") {
+		t.Fatalf("exit ghost should be dimmed:\n%q", out)
+	}
+	m.nowFn = func() time.Time { return t0.Add(graceDuration + time.Second) }
+	m, _ = m.applyPoll([]collector.Session{})
+	if strings.Contains(m.View(), "worker") {
+		t.Fatalf("exited session should disappear after 3s:\n%s", m.View())
+	}
+}
+
+func TestExitReappearCancelsGhost(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	m := seededModelAt(t0)
+	m.sessions = []collector.Session{busy("a")}
+	m, _ = m.applyPoll([]collector.Session{})          // gone → ghost
+	m, _ = m.applyPoll([]collector.Session{busy("a")}) // back
+	if len(m.exiting) != 0 {
+		t.Fatalf("reappeared session should clear its ghost: %v", m.exiting)
+	}
+}
+
+func TestAttentionChimeEdge(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	m := seededModelAt(t0)
+	m.sessions = []collector.Session{busy("a")}
+	m, evs := m.applyPoll([]collector.Session{idle("a")}) // busy→idle
+	if len(evs) != 1 {
+		t.Fatalf("enter idle: want 1 chime, got %v", evs)
+	}
+	m, evs = m.applyPoll([]collector.Session{idle("a")}) // staying idle
+	if len(evs) != 0 {
+		t.Fatalf("staying idle: want 0, got %v", evs)
+	}
+	m, _ = m.applyPoll([]collector.Session{busy("a")})   // back to busy
+	m, evs = m.applyPoll([]collector.Session{idle("a")}) // idle again
+	if len(evs) != 1 {
+		t.Fatalf("re-idle: want 1, got %v", evs)
 	}
 }
 

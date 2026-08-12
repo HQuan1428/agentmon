@@ -27,7 +27,7 @@ type Model struct {
 	player   *sound.Player
 	interval time.Duration
 	sessions []collector.Session
-	doneAt   map[string]time.Time // session/subagent ID -> when it first became done
+	exiting  map[string]exitEntry // global ID -> last snapshot of a session whose process went away
 	nowFn    func() time.Time     // injectable clock (tests override)
 	phase    int
 	scroll   int
@@ -44,7 +44,7 @@ func New(source SessionSource, player *sound.Player, interval time.Duration) Mod
 		player:   player,
 		interval: interval,
 		soundOn:  true,
-		doneAt:   map[string]time.Time{},
+		exiting:  map[string]exitEntry{},
 		nowFn:    time.Now,
 	}
 }
@@ -69,75 +69,64 @@ func (m Model) scheduleNextPoll() tea.Cmd {
 
 type pollTickMsg struct{}
 
+type exitEntry struct {
+	sess collector.Session
+	at   time.Time
+}
+
 func (m Model) applyPoll(sessions []collector.Session) (Model, []Event) {
-	firstPoll := !m.seeded
+	now := m.nowFn()
+	curIDs := topLevelIDs(sessions)
 	var evs []Event
-	if firstPoll {
-		m.seeded = true
+	if !m.seeded {
+		m.seeded = true // first poll only seeds; no chime, no exit ghosts
 	} else {
 		evs = DiffEvents(m.sessions, sessions)
+		// A top-level session present last poll but gone now has exited.
+		for _, ps := range m.sessions {
+			id := sessionID(ps, "")
+			if !curIDs[id] {
+				if _, ok := m.exiting[id]; !ok {
+					m.exiting[id] = exitEntry{sess: ps, at: now}
+				}
+			}
+		}
+	}
+	// Drop ghosts that reappeared or whose 3s window elapsed.
+	for id, e := range m.exiting {
+		if curIDs[id] || now.Sub(e.at) >= graceDuration {
+			delete(m.exiting, id)
+		}
 	}
 	m.sessions = sessions
-	m.updateDoneTimes(sessions, firstPoll)
 	return m, evs
 }
 
-// updateDoneTimes stamps the moment each session/subagent first becomes done
-// (so the view can grant it a grace window), clears the stamp when it goes
-// active again, and prunes stamps for IDs no longer present. Sessions already
-// done on the very first poll are stamped as already-expired so they are
-// hidden immediately rather than granted a grace window at startup.
-func (m Model) updateDoneTimes(sessions []collector.Session, firstPoll bool) {
-	now := m.nowFn()
-	seen := map[string]bool{}
-	var walk func([]collector.Session)
-	walk = func(ss []collector.Session) {
-		for _, s := range ss {
-			seen[s.ID] = true
-			if s.IsDone() {
-				if _, ok := m.doneAt[s.ID]; !ok {
-					if firstPoll {
-						m.doneAt[s.ID] = now.Add(-graceDuration - time.Second)
-					} else {
-						m.doneAt[s.ID] = now
-					}
-				}
-			} else {
-				delete(m.doneAt, s.ID)
-			}
-			walk(s.Children)
-		}
+func topLevelIDs(ss []collector.Session) map[string]bool {
+	ids := map[string]bool{}
+	for _, s := range ss {
+		ids[sessionID(s, "")] = true
 	}
-	walk(sessions)
-	for id := range m.doneAt {
-		if !seen[id] {
-			delete(m.doneAt, id)
-		}
-	}
+	return ids
 }
 
-// displayView returns the sessions to render — dropping any done session or
-// subagent whose grace window has elapsed — plus the set of IDs still within
-// their grace window, which the renderer draws faint.
+// displayView returns everything to render: all live sessions (never hidden)
+// plus EXIT ghosts still inside their 3s window, marked Exited and drawn faint.
 func (m Model) displayView() ([]collector.Session, map[string]bool) {
 	now := m.nowFn()
 	dim := map[string]bool{}
-	var filter func([]collector.Session) []collector.Session
-	filter = func(ss []collector.Session) []collector.Session {
-		var out []collector.Session
-		for _, s := range ss {
-			if s.IsDone() {
-				if t, ok := m.doneAt[s.ID]; ok && now.Sub(t) >= graceDuration {
-					continue // grace elapsed → hide
-				}
-				dim[s.ID] = true // still within grace → show faint
-			}
-			s.Children = filter(s.Children)
-			out = append(out, s)
+	out := append([]collector.Session(nil), m.sessions...)
+	for _, e := range m.exiting {
+		if now.Sub(e.at) >= graceDuration {
+			continue
 		}
-		return out
+		g := e.sess
+		g.Exited = true
+		g.Children = nil
+		out = append(out, g)
+		dim[g.ID] = true
 	}
-	return filter(m.sessions), dim
+	return out, dim
 }
 
 func (m Model) toggleSound() Model { m.soundOn = !m.soundOn; return m }

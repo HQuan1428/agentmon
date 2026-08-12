@@ -24,8 +24,8 @@ func TestBodyLinesGroupedSessionsAndTree(t *testing.T) {
 		"▸ improve-finbert",  // session marker
 		"└─ ⌁ task-6-review", // subagent branch + icon
 		"[", "]",             // bracketed bar
-		"6/10", "41/41", "DONE", // TASKS column (uppercase DONE)
-		"⚡ BUSY", "✓ DONE", "⏸ BLOCKED", // STATUS icons + uppercase
+		"6/10", "41/41", // TASKS column
+		"⚡ BUSY", "● IDLE", "⏸ BLOCKED", // STATUS: busy session, idle subagent, blocked bg
 		"(bg)", "needs: commit now?",
 	} {
 		if !strings.Contains(out, want) {

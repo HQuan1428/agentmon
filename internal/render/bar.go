@@ -16,53 +16,130 @@ const (
 // sweepGrad is the gradient block that slides along an indeterminate bar.
 var sweepGrad = []rune("░▒▓█▓▒░")
 
-// RenderBar renders the inner progress bar (no brackets) of the given width.
-// Determinate bars fill left-to-right with a wavefront; indeterminate ones
-// bounce a soft gradient block; done bars are solid.
+// pulseGlyphs breathe a single dot for an idle session (~500ms at 100ms/tick).
+var pulseGlyphs = []string{"·", "•", "●", "•", "·"}
+
+// State is the visual state a session is in.
+type State int
+
+const (
+	StateBusy    State = iota // alive, working, determinate
+	StateSweep                // alive, working, indeterminate
+	StateIdle                 // alive, stopped, waiting for the user
+	StateDone                 // alive, determinate task finished
+	StateBlocked              // bg job waiting on a decision
+	StateExit                 // process gone (model-set), lingering briefly
+)
+
+// StateOf derives the visual state from a session.
+func StateOf(s collector.Session) State {
+	switch {
+	case s.Exited:
+		return StateExit
+	case s.Blocked:
+		return StateBlocked
+	case s.Status == "busy":
+		if s.Mode == collector.Determinate {
+			return StateBusy
+		}
+		return StateSweep
+	default: // idle / stopped
+		if s.Mode == collector.Determinate && s.Total > 0 && s.Done >= s.Total {
+			return StateDone
+		}
+		return StateIdle
+	}
+}
+
+// RenderBar renders the inner progress bar (no brackets) of the given width,
+// animated per the session's state.
 func RenderBar(s collector.Session, width, phase int) string {
 	if width < 1 {
 		width = 1
 	}
-	if s.IsDone() {
+	switch StateOf(s) {
+	case StateDone:
 		return strings.Repeat(full, width)
+	case StateExit:
+		return strings.Repeat(empty, width)
+	case StateIdle:
+		return idleBar(width, phase)
+	case StateSweep:
+		return sweepBar(width, phase)
+	case StateBlocked:
+		return fillBar(s, width, -1) // static progress, no shimmer
+	default: // StateBusy
+		return fillBar(s, width, phase)
 	}
-	if s.Mode == collector.Determinate {
-		filled := int(math.Round(s.Fraction() * float64(width)))
-		if filled > width {
-			filled = width
-		}
-		b := strings.Repeat(full, filled)
-		rest := width - filled
-		if rest > 0 {
-			b += wave
-			rest--
-		}
-		return b + strings.Repeat(empty, rest)
+}
+
+// fillBar fills to the progress fraction. With phase >= 0 a shimmer cell slides
+// back and forth across the filled region (Busy); with phase < 0 it renders a
+// static wavefront at the fill boundary (Blocked).
+func fillBar(s collector.Session, width, phase int) string {
+	filled := int(math.Round(s.Fraction() * float64(width)))
+	if filled > width {
+		filled = width
 	}
-	// Indeterminate running: bounce the gradient block along an empty track.
+	if filled < 0 {
+		filled = 0
+	}
+	runes := make([]string, width)
+	for i := range runes {
+		if i < filled {
+			runes[i] = full
+		} else {
+			runes[i] = empty
+		}
+	}
+	if phase >= 0 {
+		if filled > 0 {
+			runes[bounce(phase, filled-1)] = wave // moving shimmer over the fill
+		}
+	} else if filled < width {
+		runes[filled] = wave // static wavefront (blocked)
+	}
+	return strings.Join(runes, "")
+}
+
+// idleBar is an empty track with a slow pulsing dot in the middle.
+func idleBar(width, phase int) string {
+	runes := make([]string, width)
+	for i := range runes {
+		runes[i] = empty
+	}
+	runes[width/2] = pulseGlyphs[phase%len(pulseGlyphs)]
+	return strings.Join(runes, "")
+}
+
+// sweepBar bounces the gradient block along an empty track (indeterminate work).
+func sweepBar(width, phase int) string {
 	grad := sweepGrad
 	block := len(grad)
 	if block > width {
 		block = width
 		grad = sweepGrad[:block]
 	}
-	span := width - block
-	pos := 0
-	if span > 0 {
-		cycle := 2 * span
-		p := phase % cycle
-		if p <= span {
-			pos = p
-		} else {
-			pos = cycle - p
-		}
-	}
 	runes := make([]string, width)
 	for i := range runes {
 		runes[i] = empty
 	}
+	pos := bounce(phase, width-block)
 	for i := 0; i < block; i++ {
 		runes[pos+i] = string(grad[i])
 	}
 	return strings.Join(runes, "")
+}
+
+// bounce maps phase to a triangle wave in [0, span].
+func bounce(phase, span int) int {
+	if span <= 0 {
+		return 0
+	}
+	cycle := 2 * span
+	p := phase % cycle
+	if p <= span {
+		return p
+	}
+	return cycle - p
 }
