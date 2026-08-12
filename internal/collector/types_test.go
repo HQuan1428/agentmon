@@ -3,6 +3,21 @@ package collector
 
 import "testing"
 
+func TestAgentIdentityHelpers(t *testing.T) {
+	if got := GlobalID(AgentOpenCode, "ses_1"); got != "opencode:ses_1" {
+		t.Fatalf("GlobalID=%q", got)
+	}
+	if got := ModelOrUnknown("  "); got != "unknown" {
+		t.Fatalf("empty model=%q", got)
+	}
+	if got := ModelOrUnknown("gpt-5.6-sol"); got != "gpt-5.6-sol" {
+		t.Fatalf("exact model changed: %q", got)
+	}
+	if !(AgentClaude.Rank() < AgentCodex.Rank() && AgentCodex.Rank() < AgentOpenCode.Rank() && AgentOpenCode.Rank() < AgentAider.Rank()) {
+		t.Fatal("agent display order is unstable")
+	}
+}
+
 func TestIsDone(t *testing.T) {
 	cases := []struct {
 		name string

@@ -1,6 +1,43 @@
 // internal/collector/types.go
 package collector
 
+import "strings"
+
+type Agent string
+
+const (
+	AgentClaude   Agent = "Claude"
+	AgentCodex    Agent = "Codex"
+	AgentOpenCode Agent = "OpenCode"
+	AgentAider    Agent = "Aider"
+)
+
+func (a Agent) Rank() int {
+	switch a {
+	case AgentClaude:
+		return 0
+	case AgentCodex:
+		return 1
+	case AgentOpenCode:
+		return 2
+	case AgentAider:
+		return 3
+	default:
+		return 99
+	}
+}
+
+func GlobalID(agent Agent, native string) string {
+	return strings.ToLower(string(agent)) + ":" + native
+}
+
+func ModelOrUnknown(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "unknown"
+	}
+	return model
+}
+
 type ProgressMode int
 
 const (
@@ -10,6 +47,9 @@ const (
 
 type Session struct {
 	ID        string
+	NativeID  string
+	Agent     Agent
+	Model     string
 	Name      string
 	Project   string
 	Cwd       string

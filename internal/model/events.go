@@ -21,7 +21,7 @@ type flatState struct {
 
 func flatten(sessions []collector.Session, into map[string]flatState) {
 	for _, s := range sessions {
-		into[s.ID] = flatState{done: s.IsDone(), blocked: s.Blocked}
+		into[sessionID(s)] = flatState{done: s.IsDone(), blocked: s.Blocked}
 		if len(s.Children) > 0 {
 			flatten(s.Children, into)
 		}
@@ -48,13 +48,24 @@ func DiffEvents(prev, cur []collector.Session) []Event {
 	return evs
 }
 
+func sessionID(s collector.Session) string {
+	if s.Agent == "" {
+		return s.ID
+	}
+	native := s.NativeID
+	if native == "" {
+		native = s.ID
+	}
+	return collector.GlobalID(s.Agent, native)
+}
+
 // flattenOrder returns IDs in a stable top-down, children-after-parent order.
 func flattenOrder(sessions []collector.Session) []string {
 	var ids []string
 	var walk func([]collector.Session)
 	walk = func(ss []collector.Session) {
 		for _, s := range ss {
-			ids = append(ids, s.ID)
+			ids = append(ids, sessionID(s))
 			walk(s.Children)
 		}
 	}

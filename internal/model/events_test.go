@@ -45,3 +45,18 @@ func TestDiffEventsChildDone(t *testing.T) {
 		t.Errorf("want child DoneEvent, got %v", evs)
 	}
 }
+
+func TestDiffEventsNamespacedIDsDoNotCollide(t *testing.T) {
+	prev := []collector.Session{
+		{ID: "same", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy"},
+		{ID: "same", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "busy"},
+	}
+	cur := []collector.Session{
+		{ID: "same", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy"},
+		{ID: "same", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "idle"},
+	}
+	evs := DiffEvents(prev, cur)
+	if len(evs) != 1 || evs[0].SessionID != "codex:same" || evs[0].Kind != DoneEvent {
+		t.Fatalf("want one codex:same DoneEvent, got %v", evs)
+	}
+}
