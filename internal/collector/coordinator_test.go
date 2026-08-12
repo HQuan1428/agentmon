@@ -17,13 +17,19 @@ func (f fakeSource) Snapshot() (procscan.Snapshot, error) {
 }
 
 type fakeAdapter struct {
-	agent      Agent
-	rows       []Session
-	err        error
-	panicValue any
+	agent           Agent
+	rows            []Session
+	err             error
+	panicValue      any
+	agentPanicValue any
 }
 
-func (f fakeAdapter) Agent() Agent { return f.agent }
+func (f fakeAdapter) Agent() Agent {
+	if f.agentPanicValue != nil {
+		panic(f.agentPanicValue)
+	}
+	return f.agent
+}
 
 func (f fakeAdapter) Discover(procscan.Snapshot) ([]Session, error) {
 	if f.panicValue != nil {
@@ -48,6 +54,35 @@ func TestCoordinatorKeepsHealthyAdapterResults(t *testing.T) {
 	}
 	if got.Errors[0].Agent != AgentClaude || got.Errors[1].Agent != AgentAider {
 		t.Fatalf("error agents=%+v", got.Errors)
+	}
+}
+
+func TestCoordinatorIsolatesNilAdapter(t *testing.T) {
+	c := NewCoordinator(fakeSource{}, nil,
+		fakeAdapter{agent: AgentCodex, rows: []Session{{ID: "codex:1", Agent: AgentCodex}}},
+	)
+
+	got := c.Collect()
+	if len(got.Sessions) != 1 || got.Sessions[0].ID != "codex:1" {
+		t.Fatalf("sessions=%+v", got.Sessions)
+	}
+	if len(got.Errors) != 1 || got.Errors[0].Agent != "" {
+		t.Fatalf("errors=%+v", got.Errors)
+	}
+}
+
+func TestCoordinatorIsolatesAgentPanic(t *testing.T) {
+	c := NewCoordinator(fakeSource{},
+		fakeAdapter{agentPanicValue: "agent boom"},
+		fakeAdapter{agent: AgentCodex, rows: []Session{{ID: "codex:1", Agent: AgentCodex}}},
+	)
+
+	got := c.Collect()
+	if len(got.Sessions) != 1 || got.Sessions[0].ID != "codex:1" {
+		t.Fatalf("sessions=%+v", got.Sessions)
+	}
+	if len(got.Errors) != 1 || got.Errors[0].Agent != "" {
+		t.Fatalf("errors=%+v", got.Errors)
 	}
 }
 

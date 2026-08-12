@@ -41,8 +41,7 @@ func (c *Coordinator) Collect() Collection {
 	collection := Collection{}
 	seen := make(map[string]struct{})
 	for _, adapter := range c.adapters {
-		agent := adapter.Agent()
-		rows, err := safeDiscover(adapter, snapshot)
+		agent, rows, err := safeDiscover(adapter, snapshot)
 		if err != nil {
 			collection.Errors = append(collection.Errors, AdapterError{Agent: agent, Err: err})
 			continue
@@ -97,14 +96,16 @@ func filterSession(agent Agent, session Session, seen map[string]struct{}) (Sess
 	return session, errors, true
 }
 
-func safeDiscover(adapter Adapter, snapshot procscan.Snapshot) (rows []Session, err error) {
+func safeDiscover(adapter Adapter, snapshot procscan.Snapshot) (agent Agent, rows []Session, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			rows = nil
 			err = fmt.Errorf("adapter panic: %v", recovered)
 		}
 	}()
-	return adapter.Discover(snapshot)
+	agent = adapter.Agent()
+	rows, err = adapter.Discover(snapshot)
+	return agent, rows, err
 }
 
 func validateSession(agent Agent, session Session) error {
