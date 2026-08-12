@@ -41,7 +41,6 @@ var (
 	frameStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1)
 	dotActive    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	dotBusy      = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	dotBlocked   = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	bellOn       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	bellOff      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
@@ -124,20 +123,18 @@ func header(cw int, c Counts, soundOn bool) string {
 }
 
 func counterBadge(c Counts) string {
-	return fmt.Sprintf("%s %s  %s %s  %s %s",
+	return fmt.Sprintf("%s %s  %s %s",
 		dotActive.Render("●"), fmt.Sprintf("%d active", c.Active),
 		dotBusy.Render("⚡"), fmt.Sprintf("%d busy", c.Busy),
-		dotBlocked.Render("⏸"), fmt.Sprintf("%d blocked", c.Blocked),
 	)
 }
 
 // counterCompact shows just the icons and counts with a fixed gap — the
 // friendly small-screen form.
 func counterCompact(c Counts) string {
-	return fmt.Sprintf("%s %d   %s %d   %s %d",
+	return fmt.Sprintf("%s %d   %s %d",
 		dotActive.Render("●"), c.Active,
 		dotBusy.Render("⚡"), c.Busy,
-		dotBlocked.Render("⏸"), c.Blocked,
 	)
 }
 

@@ -68,6 +68,16 @@ func TestSmallHeaderResponsive(t *testing.T) {
 	}
 }
 
+func TestHeaderOmitsBlockedCount(t *testing.T) {
+	counts := Counts{Active: 3, Busy: 1, Blocked: 2}
+	for _, width := range []int{90, 40} {
+		out := stripANSI(Compose(width, 20, counts, true, nil, 0, true))
+		if strings.Contains(out, "blocked") || strings.Contains(out, "⏸") {
+			t.Errorf("width %d: header should not display blocked status:\n%s", width, out)
+		}
+	}
+}
+
 func TestComposeBellOff(t *testing.T) {
 	out := Compose(90, 24, Counts{}, false, nil, 0, true)
 	if !strings.Contains(out, "🔇 OFF") {
