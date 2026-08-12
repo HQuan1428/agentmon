@@ -2,7 +2,6 @@
 package model
 
 import (
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,8 +10,6 @@ import (
 	"agentmon/internal/render"
 	"agentmon/internal/sound"
 )
-
-const barWidth = 16
 
 // graceDuration is how long a session that just completed stays on screen
 // (rendered faint) before it disappears from the view.
@@ -31,6 +28,7 @@ type Model struct {
 	nowFn    func() time.Time     // injectable clock (tests override)
 	phase    int
 	scroll   int
+	width    int
 	height   int
 	soundOn  bool
 	collapse bool
@@ -166,6 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 	case pollMsg:
@@ -190,58 +189,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// renderLines produces the full header+body output (respecting m.collapse)
-// split into individual lines, with no trailing empty line. View and
-// maxScroll both build on this so their notion of "lines" always agrees.
-func (m Model) renderLines() []string {
+// bodyLines returns the display session tree (collapse applied) and the
+// rendered table body lines. View and maxScroll share it so their line
+// counts agree. An empty tree yields nil lines (the empty-state hero).
+func (m Model) bodyLines() ([]collector.Session, []string) {
 	view, dim := m.displayView()
 	if m.collapse {
 		view = stripChildren(view)
 	}
-	header := "agentmon — q quit · s sound · c tree · ↑/↓ scroll\n\n"
-	var full string
 	if len(view) == 0 {
-		full = header + "  (no active sessions)\n"
-	} else {
-		full = header + render.RenderView(view, barWidth, m.phase, dim)
+		return view, nil
 	}
-	full = strings.TrimSuffix(full, "\n")
-	return strings.Split(full, "\n")
+	return view, render.BodyLines(view, m.phase, dim)
 }
 
-// maxScroll returns the largest scroll offset that still shows a full
-// viewport of content, based on the same line count View renders.
+// maxScroll is the largest scroll offset that still fills the body viewport.
 func (m Model) maxScroll() int {
-	if m.height <= 0 {
+	_, lines := m.bodyLines()
+	budget := render.BodyBudget(m.height)
+	if budget <= 0 {
 		return 0
 	}
-	if ms := len(m.renderLines()) - m.height; ms > 0 {
+	if ms := len(lines) - budget; ms > 0 {
 		return ms
 	}
 	return 0
 }
 
 func (m Model) View() string {
-	lines := m.renderLines()
-	if m.height <= 0 {
-		return strings.Join(lines, "\n") + "\n"
-	}
-
-	maxScroll := len(lines) - m.height
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	eff := m.scroll
-	if eff < 0 {
-		eff = 0
-	} else if eff > maxScroll {
-		eff = maxScroll
-	}
-	end := eff + m.height
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return strings.Join(lines[eff:end], "\n") + "\n"
+	view, lines := m.bodyLines()
+	counts := render.CountSessions(view)
+	return render.Compose(m.width, m.height, counts, m.soundOn, lines, m.scroll, len(view) == 0)
 }
 
 func stripChildren(sessions []collector.Session) []collector.Session {
