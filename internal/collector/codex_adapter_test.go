@@ -64,6 +64,7 @@ func TestCodexAdapterRecognizesNodeWrapperOnly(t *testing.T) {
 	rows, err := NewCodexAdapter(filepath.Join(t.TempDir(), ".codex")).Discover(procscan.Snapshot{Processes: []procscan.Process{
 		{PID: 42, Comm: "node", Exe: "/usr/bin/node", Args: []string{"node", "/opt/node_modules/@openai/codex/bin/codex.js"}, Cwd: "/work/p"},
 		{PID: 43, Comm: "node", Exe: "/usr/bin/node", Args: []string{"node", "/opt/node_modules/other/bin/other.js"}, Cwd: "/work/q"},
+		{PID: 44, Comm: "node", Exe: "/usr/bin/node", Args: []string{"node", "/opt/unrelated/codex"}, Cwd: "/work/r"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -131,5 +132,37 @@ func TestCodexAdapterRetainsCompletedSessionForFourSeconds(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "codex:pid:42" || rows[0].IsDone() {
 		t.Fatalf("after expiry=%+v", rows)
+	}
+}
+
+func TestCodexAdapterPrunesCompletedSessionWhenPIDIsReused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".codex")
+	path := filepath.Join(root, "sessions", "2026", "08", "12", "rollout-old.jsonl")
+	writeFile(t, path, strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"old-session","cwd":"/work/old"}}`,
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}`,
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}`,
+	}, "\n")+"\n")
+	a := NewCodexAdapter(root)
+
+	rows, err := a.Discover(procscan.Snapshot{Processes: []procscan.Process{{
+		PID: 42, StartTicks: 100, Comm: "codex", Cwd: "/work/old",
+		Files: []procscan.OpenFile{{FD: 7, Path: path}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "codex:old-session" {
+		t.Fatalf("completed=%+v", rows)
+	}
+
+	rows, err = a.Discover(procscan.Snapshot{Processes: []procscan.Process{{
+		PID: 42, StartTicks: 200, Comm: "codex", Cwd: "/work/new",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "codex:pid:42" || rows[0].Cwd != "/work/new" || rows[0].IsDone() {
+		t.Fatalf("reused PID observation=%+v", rows)
 	}
 }

@@ -20,9 +20,10 @@ type CodexAdapter struct {
 }
 
 type recentSession struct {
-	Row       Session
-	ParentID  string
-	ExpiresAt time.Time
+	Row        Session
+	ParentID   string
+	StartTicks uint64
+	ExpiresAt  time.Time
 }
 
 type codexObservedSession struct {
@@ -41,7 +42,7 @@ func (a *CodexAdapter) Agent() Agent { return AgentCodex }
 
 func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 	now := a.now()
-	alive := make(map[int]bool)
+	instances := make(map[int]uint64)
 	attributed := make(map[int]bool)
 	emitted := make(map[int]bool)
 	observed := make(map[string]codexObservedSession)
@@ -52,7 +53,7 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 			continue
 		}
 		processes = append(processes, process)
-		alive[process.PID] = true
+		instances[process.PID] = process.StartTicks
 		for _, file := range process.Files {
 			if !a.isRolloutPath(file.Path) {
 				continue
@@ -70,10 +71,10 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 				delete(a.recent, row.ID)
 			case rollout.Done:
 				recent, ok := a.recent[row.ID]
-				if !ok {
+				if !ok || recent.StartTicks != process.StartTicks {
 					recent.ExpiresAt = now.Add(codexRecentDuration)
 				}
-				recent.Row, recent.ParentID = row, entry.ParentID
+				recent.Row, recent.ParentID, recent.StartTicks = row, entry.ParentID, process.StartTicks
 				a.recent[row.ID] = recent
 				if now.After(recent.ExpiresAt) {
 					continue
@@ -88,7 +89,8 @@ func (a *CodexAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) {
 	}
 
 	for id, recent := range a.recent {
-		if !alive[recent.Row.PID] || now.After(recent.ExpiresAt) {
+		startTicks, alive := instances[recent.Row.PID]
+		if !alive || startTicks != recent.StartTicks || now.After(recent.ExpiresAt) {
 			delete(a.recent, id)
 			continue
 		}
@@ -123,7 +125,7 @@ func isCodexProcess(process procscan.Process) bool {
 	for _, arg := range process.Args {
 		path := filepath.ToSlash(arg)
 		base := strings.ToLower(filepath.Base(arg))
-		if base == "codex" || (base == "codex.js" && strings.Contains(path, "/@openai/codex/")) {
+		if base == "codex.js" && strings.Contains(path, "/@openai/codex/") {
 			return true
 		}
 	}
