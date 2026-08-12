@@ -159,6 +159,30 @@ func TestAttentionChimeEdge(t *testing.T) {
 	}
 }
 
+func TestSubagentFadesOutWhenDone(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	m := seededModelAt(t0)
+	parent := func(childStatus string) []collector.Session {
+		return []collector.Session{{ID: "p", Name: "parent", Project: "x", Status: "busy", Mode: collector.Indeterminate,
+			Children: []collector.Session{{ID: "c", Name: "kid-task", Status: childStatus, Mode: collector.Indeterminate}}}}
+	}
+	m.sessions = parent("busy")
+	m, evs := m.applyPoll(parent("idle")) // subagent finished at t0
+	if len(evs) != 0 {
+		t.Fatalf("subagent finishing must be silent, got %v", evs)
+	}
+	if !strings.Contains(m.View(), "kid-task") {
+		t.Fatalf("finished subagent should show within grace:\n%s", m.View())
+	}
+	m.nowFn = func() time.Time { return t0.Add(graceDuration + time.Second) }
+	if strings.Contains(m.View(), "kid-task") {
+		t.Fatalf("finished subagent should fade out after grace:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "parent") {
+		t.Fatalf("parent session must stay visible:\n%s", m.View())
+	}
+}
+
 func TestToggleSound(t *testing.T) {
 	m := New(fakeCollectionSource{}, nil, time.Second)
 	if !m.soundOn {

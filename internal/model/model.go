@@ -23,29 +23,31 @@ type SessionSource interface {
 }
 
 type Model struct {
-	source   SessionSource
-	player   *sound.Player
-	interval time.Duration
-	sessions []collector.Session
-	exiting  map[string]exitEntry // global ID -> last snapshot of a session whose process went away
-	nowFn    func() time.Time     // injectable clock (tests override)
-	phase    int
-	scroll   int
-	width    int
-	height   int
-	soundOn  bool
-	collapse bool
-	seeded   bool
+	source    SessionSource
+	player    *sound.Player
+	interval  time.Duration
+	sessions  []collector.Session
+	exiting   map[string]exitEntry // global ID -> last snapshot of a session whose process went away
+	childDone map[string]time.Time // subagent global ID -> when it finished (fades out after grace)
+	nowFn     func() time.Time     // injectable clock (tests override)
+	phase     int
+	scroll    int
+	width     int
+	height    int
+	soundOn   bool
+	collapse  bool
+	seeded    bool
 }
 
 func New(source SessionSource, player *sound.Player, interval time.Duration) Model {
 	return Model{
-		source:   source,
-		player:   player,
-		interval: interval,
-		soundOn:  true,
-		exiting:  map[string]exitEntry{},
-		nowFn:    time.Now,
+		source:    source,
+		player:    player,
+		interval:  interval,
+		soundOn:   true,
+		exiting:   map[string]exitEntry{},
+		childDone: map[string]time.Time{},
+		nowFn:     time.Now,
 	}
 }
 
@@ -98,8 +100,40 @@ func (m Model) applyPoll(sessions []collector.Session) (Model, []Event) {
 			delete(m.exiting, id)
 		}
 	}
+	m.updateChildDone(sessions, now)
 	m.sessions = sessions
 	return m, evs
+}
+
+// childFinished reports a subagent that has stopped running (its task result
+// arrived) — the trigger to fade it out.
+func childFinished(c collector.Session) bool {
+	st := render.StateOf(c)
+	return st == render.StateIdle || st == render.StateDone
+}
+
+// updateChildDone stamps when each subagent first finished, clears the stamp if
+// it goes active again, and prunes subagents no longer present.
+func (m Model) updateChildDone(sessions []collector.Session, now time.Time) {
+	seen := map[string]bool{}
+	for _, s := range sessions {
+		for _, c := range s.Children {
+			id := sessionID(c, s.Agent)
+			seen[id] = true
+			if childFinished(c) {
+				if _, ok := m.childDone[id]; !ok {
+					m.childDone[id] = now
+				}
+			} else {
+				delete(m.childDone, id)
+			}
+		}
+	}
+	for id := range m.childDone {
+		if !seen[id] {
+			delete(m.childDone, id)
+		}
+	}
 }
 
 func topLevelIDs(ss []collector.Session) map[string]bool {
@@ -115,7 +149,11 @@ func topLevelIDs(ss []collector.Session) map[string]bool {
 func (m Model) displayView() ([]collector.Session, map[string]bool) {
 	now := m.nowFn()
 	dim := map[string]bool{}
-	out := append([]collector.Session(nil), m.sessions...)
+	var out []collector.Session
+	for _, s := range m.sessions {
+		s.Children = m.filterChildren(s, now, dim)
+		out = append(out, s)
+	}
 	for _, e := range m.exiting {
 		if now.Sub(e.at) >= graceDuration {
 			continue
@@ -127,6 +165,22 @@ func (m Model) displayView() ([]collector.Session, map[string]bool) {
 		dim[g.ID] = true
 	}
 	return out, dim
+}
+
+// filterChildren drops subagents whose fade-out window elapsed and dims those
+// still fading; running subagents pass through untouched.
+func (m Model) filterChildren(s collector.Session, now time.Time, dim map[string]bool) []collector.Session {
+	var out []collector.Session
+	for _, c := range s.Children {
+		if childFinished(c) {
+			if t, ok := m.childDone[sessionID(c, s.Agent)]; ok && now.Sub(t) >= graceDuration {
+				continue // faded out
+			}
+			dim[c.ID] = true
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 func (m Model) toggleSound() Model { m.soundOn = !m.soundOn; return m }

@@ -50,14 +50,14 @@ func TestDiffEventsNewDoneIDDoesNotComplete(t *testing.T) {
 	}
 }
 
-func TestDiffEventsChildDone(t *testing.T) {
+func TestDiffEventsSubagentSilent(t *testing.T) {
+	// A subagent finishing must NOT ring the chime; only top-level sessions do.
 	prev := []collector.Session{{ID: "p", Status: "busy", Mode: collector.Indeterminate,
 		Children: []collector.Session{{ID: "c", Mode: collector.Indeterminate, Status: "busy"}}}}
 	cur := []collector.Session{{ID: "p", Status: "busy", Mode: collector.Indeterminate,
 		Children: []collector.Session{{ID: "c", Mode: collector.Indeterminate, Status: "idle"}}}}
-	evs := DiffEvents(prev, cur)
-	if len(evs) != 1 || evs[0].SessionID != "c" || evs[0].Kind != DoneEvent {
-		t.Errorf("want child DoneEvent, got %v", evs)
+	if evs := DiffEvents(prev, cur); len(evs) != 0 {
+		t.Errorf("subagent finishing should be silent, got %v", evs)
 	}
 }
 
@@ -76,21 +76,17 @@ func TestDiffEventsNamespacedIDsDoNotCollide(t *testing.T) {
 	}
 }
 
-func TestDiffEventsChildIDsInheritParentAgent(t *testing.T) {
+func TestDiffEventsSubagentSilentAcrossAgents(t *testing.T) {
+	// Even with per-agent namespacing, a finishing subagent stays silent.
 	prev := []collector.Session{
-		{ID: "parent", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy",
-			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
 		{ID: "parent", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "busy",
 			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
 	}
 	cur := []collector.Session{
-		{ID: "parent", Agent: collector.AgentClaude, Mode: collector.Indeterminate, Status: "busy",
-			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "busy"}}},
 		{ID: "parent", Agent: collector.AgentCodex, Mode: collector.Indeterminate, Status: "busy",
 			Children: []collector.Session{{ID: "child", Mode: collector.Indeterminate, Status: "idle"}}},
 	}
-	evs := DiffEvents(prev, cur)
-	if len(evs) != 1 || evs[0].SessionID != "codex:child" || evs[0].Kind != DoneEvent {
-		t.Fatalf("want one codex:child DoneEvent, got %v", evs)
+	if evs := DiffEvents(prev, cur); len(evs) != 0 {
+		t.Fatalf("subagent finishing should be silent, got %v", evs)
 	}
 }

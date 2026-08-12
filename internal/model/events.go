@@ -34,15 +34,13 @@ func flatten(sessions []collector.Session, into map[string]flatState) {
 }
 
 func flattenWithAgent(sessions []collector.Session, into map[string]flatState, parentAgent collector.Agent) {
+	// Top-level only: subagents never ring the chime.
 	for _, s := range sessions {
 		agent := s.Agent
 		if agent == "" {
 			agent = parentAgent
 		}
 		into[sessionID(s, agent)] = flatState{attention: attention(s), blocked: s.Blocked}
-		if len(s.Children) > 0 {
-			flattenWithAgent(s.Children, into, agent)
-		}
 	}
 }
 
@@ -92,7 +90,6 @@ func flattenOrder(sessions []collector.Session) []string {
 				agent = parentAgent
 			}
 			ids = append(ids, sessionID(s, agent))
-			walk(s.Children, agent)
 		}
 	}
 	walk(sessions, "")
