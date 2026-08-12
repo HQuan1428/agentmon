@@ -62,6 +62,9 @@ func BodyLines(sessions []collector.Session, phase int, dim map[string]bool, tot
 		}
 		faint := dim[s.ID]
 		lines = append(lines, dimIf(sessionRow(s, phase, !faint, layout), faint))
+		if layout.Compact {
+			lines = append(lines, dimIf(compactSessionDetail(s, phase, !faint, layout, cw), faint))
+		}
 		if s.Blocked && s.NeedsHint != "" {
 			needs := "        needs: " + truncate(s.NeedsHint, 56)
 			lines = append(lines, needsStyle.Render(truncate(needs, cw)))
@@ -112,6 +115,27 @@ func sessionRow(s collector.Session, phase int, colored bool, layout Layout) str
 		status = statusStyle(s).Render(status)
 	}
 	return name + modelCell(s.Model, layout) + progressCell(s, phase, layout) + padRight(tasksText(s), layout.TasksW) + " " + status
+}
+
+func compactSessionDetail(s collector.Session, phase int, colored bool, layout Layout, width int) string {
+	const prefix = childIndent + "model: "
+	tasks := tasksText(s)
+	status := statusText(s)
+	barW := layout.BarW
+	fixed := lipgloss.Width(prefix) + 5 + lipgloss.Width(tasks) + lipgloss.Width(status)
+	if maxBar := width - fixed - 1; barW > maxBar {
+		barW = maxBar
+	}
+	if barW < 1 {
+		barW = 1
+	}
+	suffix := " [" + RenderBar(s, barW, phase) + "] " + tasks + " " + status
+	model := truncate(collector.ModelOrUnknown(s.Model), width-lipgloss.Width(prefix)-lipgloss.Width(suffix))
+	if colored {
+		status = statusStyle(s).Render(status)
+		suffix = " [" + RenderBar(s, barW, phase) + "] " + tasks + " " + status
+	}
+	return truncate(prefix+model+suffix, width)
 }
 
 // childRow builds a subagent row, indented under its session, in soft gray.

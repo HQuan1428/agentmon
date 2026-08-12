@@ -137,6 +137,27 @@ func TestToggleSound(t *testing.T) {
 	}
 }
 
+func TestCollapseKeepsAgentHierarchy(t *testing.T) {
+	m := New(fakeCollectionSource{}, nil, time.Second)
+	m, _ = m.applyPoll([]collector.Session{{
+		ID: "codex:1", Agent: collector.AgentCodex, Model: "gpt-5.6-sol", Name: "codex-work", Project: "proj",
+		Status: "busy", Mode: collector.Indeterminate,
+		Children: []collector.Session{{ID: "codex:child", Agent: collector.AgentCodex, Name: "review", Status: "busy", Mode: collector.Indeterminate}},
+	}})
+	m.width = 70
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	out := updated.(Model).View()
+	for _, want := range []string{"proj", "Codex", "codex-work", "gpt-5.6-sol"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("collapsed view missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "review") {
+		t.Fatalf("collapsed view kept subagent:\n%s", out)
+	}
+}
+
 func manySessions(n int) []collector.Session {
 	sessions := make([]collector.Session, 0, n)
 	for i := 0; i < n; i++ {

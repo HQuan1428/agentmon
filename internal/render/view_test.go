@@ -88,8 +88,44 @@ func TestLayoutForWidthAndCompactModel(t *testing.T) {
 	out := stripANSI(strings.Join(BodyLines([]collector.Session{{
 		ID: "codex:1", Agent: collector.AgentCodex, Model: "gpt-5.6-sol", Name: "work", Project: "proj", Status: "busy", Mode: collector.Indeterminate,
 	}}, 0, nil, 80), "\n"))
-	if strings.Contains(out, "gpt-5.6-sol") {
-		t.Fatalf("compact body should hide model:\n%s", out)
+	if !strings.Contains(out, "gpt-5.6-sol") {
+		t.Fatalf("compact body should continue model:\n%s", out)
+	}
+}
+
+func TestCompactModelContinuation(t *testing.T) {
+	sessions := []collector.Session{{
+		ID: "codex:1", Agent: collector.AgentCodex, Model: "gpt-5.6-sol", Name: "codex-work", Project: "proj",
+		Status: "busy", Mode: collector.Determinate, Done: 2, Total: 5,
+		Children: []collector.Session{{
+			ID: "codex:child", Agent: collector.AgentCodex, Model: "child-model", Name: "review",
+			Status: "busy", Mode: collector.Indeterminate,
+		}},
+	}}
+
+	lines := BodyLines(sessions, 0, nil, 70)
+	nameIdx := indexLine(lines, "codex-work")
+	modelIdx := indexLine(lines, "gpt-5.6-sol")
+	if nameIdx < 0 || modelIdx != nameIdx+1 {
+		t.Fatalf("compact rows=%q", lines)
+	}
+	detail := stripANSI(lines[modelIdx])
+	for _, want := range []string{"model:", "[", "]", "2/5", "BUSY"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("compact detail missing %q: %q", want, detail)
+		}
+	}
+	child := lineContaining(stripANSI(strings.Join(lines, "\n")), "review")
+	if strings.Contains(child, "gpt-5.6-sol") || strings.Contains(child, "child-model") {
+		t.Fatalf("subagent leaked model: %q", child)
+	}
+
+	narrow := stripANSI(strings.Join(BodyLines(sessions, 0, nil, 40), "\n"))
+	if strings.Contains(narrow, "unknown") || strings.Contains(narrow, "child-model") {
+		t.Fatalf("narrow rows replaced or leaked model: %q", narrow)
+	}
+	if !strings.Contains(narrow, "model: …") {
+		t.Fatalf("narrow rows should truncate the evidenced model: %q", narrow)
 	}
 }
 
@@ -142,6 +178,15 @@ func lineContaining(text, needle string) string {
 		}
 	}
 	return ""
+}
+
+func indexLine(lines []string, needle string) int {
+	for i, line := range lines {
+		if strings.Contains(stripANSI(line), needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestCountSessions(t *testing.T) {
