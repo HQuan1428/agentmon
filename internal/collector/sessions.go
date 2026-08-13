@@ -57,6 +57,9 @@ func scanSessions(root string, alive func(int) bool) ([]Session, error) {
 		if json.Unmarshal(data, &r) != nil {
 			continue
 		}
+		if r.Kind == "bg" {
+			continue // bg jobs come from the jobs/ store (ScanJobs), not pid-gated here
+		}
 		if !alive(r.PID) {
 			continue
 		}

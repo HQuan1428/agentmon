@@ -16,6 +16,9 @@ const (
 // sweepGrad is the gradient block that slides along an indeterminate bar.
 var sweepGrad = []rune("░▒▓█▓▒░")
 
+// comet is the forward-flowing shimmer over a Busy fill: head → fading tail.
+var comet = []string{"▓", "▒", "░"} // index 0 = head (brightest)
+
 // pulseGlyphs breathe a single dot for an idle session (~500ms at 100ms/tick).
 var pulseGlyphs = []string{"·", "•", "●", "•", "·"}
 
@@ -94,7 +97,12 @@ func fillBar(s collector.Session, width, phase int) string {
 	}
 	if phase >= 0 {
 		if filled > 0 {
-			runes[bounce(phase, filled-1)] = wave // moving shimmer over the fill
+			head := phase % filled
+			// draw tail first, head last, so head wins when filled < len(comet)
+			for i := len(comet) - 1; i >= 0; i-- {
+				pos := ((head-i)%filled + filled) % filled
+				runes[pos] = comet[i]
+			}
 		}
 	} else if filled < width {
 		runes[filled] = wave // static wavefront (blocked)

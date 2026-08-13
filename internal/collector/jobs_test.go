@@ -2,9 +2,50 @@
 package collector
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestScanJobsLivenessAndReaping(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	write := func(id, body string, age time.Duration) {
+		p := filepath.Join(root, "jobs", id, "state.json")
+		writeFile(t, p, body)
+		at := now.Add(-age)
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("run", `{"state":"running","detail":"3/8 tasks done","name":"build","cwd":"/home/u/proj"}`, 0)
+	write("blk", `{"state":"blocked","detail":"5/8 tasks done","needs":"commit?","name":"blk","cwd":"/x/y"}`, 0)
+	write("don", `{"state":"done","detail":"8/8 tasks done","name":"don","cwd":"/x/y"}`, 0)
+	write("stalerun", `{"state":"running","detail":"1/2 tasks done","name":"old","cwd":"/x/y"}`, 30*time.Minute)
+	write("donegone", `{"state":"done","detail":"2/2 tasks done","name":"dg","cwd":"/x/y"}`, time.Minute)
+
+	by := map[string]Session{}
+	for _, s := range ScanJobs(root, now) {
+		by[s.jobID] = s
+	}
+	for _, want := range []string{"run", "blk", "don"} {
+		if _, ok := by[want]; !ok {
+			t.Errorf("job %q should be visible", want)
+		}
+	}
+	for _, gone := range []string{"stalerun", "donegone"} {
+		if _, ok := by[gone]; ok {
+			t.Errorf("job %q should be dropped", gone)
+		}
+	}
+	if s := by["run"]; s.Kind != "bg" || s.Status != "busy" || s.Mode != Determinate || s.Done != 3 || s.Total != 8 || s.Name != "build" || s.Project != "proj" {
+		t.Fatalf("run=%+v", s)
+	}
+	if s := by["blk"]; !s.Blocked || s.JobState != "blocked" || s.NeedsHint != "commit?" {
+		t.Fatalf("blk=%+v", s)
+	}
+}
 
 func TestParseJobBlockedWithProgress(t *testing.T) {
 	root := t.TempDir()

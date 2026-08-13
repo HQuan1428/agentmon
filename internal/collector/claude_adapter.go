@@ -1,16 +1,19 @@
 package collector
 
 import (
+	"time"
+
 	"agentmon/internal/procscan"
 )
 
 type ClaudeAdapter struct {
 	root    string
 	scanner *Scanner
+	now     func() time.Time
 }
 
 func NewClaudeAdapter(root string) *ClaudeAdapter {
-	return &ClaudeAdapter{root: root, scanner: NewScanner()}
+	return &ClaudeAdapter{root: root, scanner: NewScanner(), now: time.Now}
 }
 
 func (a *ClaudeAdapter) Agent() Agent { return AgentClaude }
@@ -28,19 +31,6 @@ func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) 
 		transcript := a.scanner.Scan(path)
 		s.Model = transcript.Model
 
-		if s.Kind == "bg" && s.jobID != "" {
-			if state, blocked, needs, done, total, ok := ParseJob(a.root, s.jobID); ok {
-				s.JobState, s.Blocked, s.NeedsHint, s.Done, s.Total = state, blocked, needs, done, total
-				if total > 0 {
-					s.Mode = Determinate
-				} else {
-					s.Mode = Indeterminate
-				}
-				normalizeClaudeSession(s)
-				continue
-			}
-		}
-
 		if done, total, ok := ParseTasksDir(a.root, s.ID); ok {
 			// Current Claude Code (TaskCreate/TaskUpdate store) takes priority.
 			s.Mode, s.Done, s.Total = Determinate, done, total
@@ -54,6 +44,13 @@ func (a *ClaudeAdapter) Discover(snapshot procscan.Snapshot) ([]Session, error) 
 		normalizeClaudeSession(s)
 	}
 	a.scanner.Prune(live)
+
+	// bg jobs are daemon-backed and owned by the jobs/ store, not sessions/
+	// (whose recorded pid is a dead CLI launcher). Liveness is job-state, not pid.
+	for _, job := range ScanJobs(a.root, a.now()) {
+		normalizeClaudeSession(&job)
+		sessions = append(sessions, job)
+	}
 	return sessions, nil
 }
 

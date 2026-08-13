@@ -79,6 +79,47 @@ func resultLine(useID string) string {
 	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + useID + `"}]}}`
 }
 
+func agentLine(id, desc, subtype string) string {
+	return `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"` + id + `","name":"Agent","input":{"description":"` + desc + `","subagent_type":"` + subtype + `"}}]}}`
+}
+
+// launchAckLine is the inline tool_result current Claude Code returns milliseconds
+// after dispatching a background Agent — a launch ack carrying the agentId, NOT
+// completion.
+func launchAckLine(useID, agentID string) string {
+	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + useID +
+		`","content":[{"type":"text","text":"Async agent launched successfully. agentId: ` + agentID + ` (internal ID)"}]}]}}`
+}
+
+func TestScannerBackgroundSubagentLiveness(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "sess.jsonl")
+	writeFile(t, path,
+		agentLine("tu1", "Investigate", "investigator")+"\n"+launchAckLine("tu1", "aaa1")+"\n"+
+			agentLine("tu2", "Build", "builder")+"\n"+launchAckLine("tu2", "bbb2")+"\n")
+	subDir := filepath.Join(root, "sess", "subagents")
+	// aaa1 finished cleanly; bbb2 is mid tool call (still running)
+	writeFile(t, filepath.Join(subDir, "agent-aaa1.jsonl"),
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}`+"\n")
+	writeFile(t, filepath.Join(subDir, "agent-bbb2.jsonl"),
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"z","name":"Bash"}]}}`+"\n")
+
+	snap := NewScanner().Scan(path)
+	if len(snap.Children) != 2 {
+		t.Fatalf("children=%+v", snap.Children)
+	}
+	by := map[string]Session{}
+	for _, c := range snap.Children {
+		by[c.Name] = c
+	}
+	if !by["Investigate"].IsDone() {
+		t.Errorf("finished (end_turn) subagent should be DONE: %+v", by["Investigate"])
+	}
+	if by["Build"].IsDone() {
+		t.Errorf("running subagent should not be DONE: %+v", by["Build"])
+	}
+}
+
 func TestParseSubagents(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "x.jsonl")

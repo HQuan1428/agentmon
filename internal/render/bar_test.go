@@ -28,6 +28,26 @@ func TestRenderBarBusyShimmer(t *testing.T) {
 	}
 }
 
+func TestRenderBarBusyCometForward(t *testing.T) {
+	s := collector.Session{Mode: collector.Determinate, Done: 6, Total: 12, Status: "busy"}
+	filled := 6                      // round(0.5 * 12)
+	headPos := func(phase int) int { // rune index of the ▓ head cell
+		return runeLen(RenderBar(s, 12, phase)[:strings.Index(RenderBar(s, 12, phase), comet[0])])
+	}
+	prev := -1
+	for phase := 0; phase < filled; phase++ {
+		head := headPos(phase)
+		if phase > 0 && head != prev+1 {
+			t.Fatalf("phase %d head=%d want %d (must advance one cell, no reversal)", phase, head, prev+1)
+		}
+		prev = head
+	}
+	// after a full pass the head wraps back to the start
+	if h := headPos(filled); h != 0 {
+		t.Errorf("head after wrap=%d want 0", h)
+	}
+}
+
 func TestRenderBarDone(t *testing.T) {
 	s := collector.Session{Mode: collector.Determinate, Done: 5, Total: 5, Status: "idle"}
 	if bar := RenderBar(s, 8, 3); bar != strings.Repeat("█", 8) {

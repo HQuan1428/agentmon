@@ -64,6 +64,7 @@ type Session struct {
 	NeedsHint string
 	Exited    bool   // set by the model for a session whose process just went away
 	jobID     string // bg jobId, used to locate jobs/<jobID>/state.json
+	agentID   string // subagent async id, used to locate subagents/agent-<agentID>.jsonl
 	Children  []Session
 	UpdatedAt int64
 }

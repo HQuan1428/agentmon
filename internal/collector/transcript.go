@@ -7,8 +7,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
+
+// subStaleTTL reaps a background subagent whose agent-<id>.jsonl stopped growing
+// without a clean end_turn (crashed or abandoned-awaiting-continuation), so it
+// eventually shows DONE and fades instead of pinning the tree forever.
+// ponytail: mtime-idle heuristic; a long TTL avoids false-positives on think pauses.
+const subStaleTTL = 10 * time.Minute
 
 func EncodeCwd(cwd string) string {
 	return strings.ReplaceAll(cwd, "/", "-")
@@ -22,16 +30,61 @@ func TranscriptPath(root, cwd, sessionID string) string {
 type transcriptLine struct {
 	Type    string `json:"type"`
 	Message struct {
-		Role    string `json:"role"`
-		Model   string `json:"model"`
-		Content []struct {
+		Role       string `json:"role"`
+		Model      string `json:"model"`
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
 			Type      string          `json:"type"`
 			Name      string          `json:"name"`
 			ID        string          `json:"id"`
 			ToolUseID string          `json:"tool_use_id"`
 			Input     json.RawMessage `json:"input"`
+			Content   json.RawMessage `json:"content"` // tool_result payload (string or [{text}])
 		} `json:"content"`
 	} `json:"message"`
+}
+
+// launchAckRe pulls the agentId out of an async-agent launch acknowledgement.
+// Current Claude Code dispatches Task/Agent in the background: the inline
+// tool_result returns "Async agent launched successfully … agentId: <hex>"
+// within milliseconds of the spawn — it is NOT completion. The real subagent
+// runs on in projects/<enc>/<sessionID>/subagents/agent-<agentId>.jsonl.
+var launchAckRe = regexp.MustCompile(`agentId:\s*([0-9a-fA-F]+)`)
+
+// launchAckAgentID returns the async agentId when a tool_result is a background
+// launch ack, or "" for a plain (synchronous) result.
+func launchAckAgentID(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	text := resultText(raw)
+	if !strings.Contains(text, "Async agent launched") {
+		return ""
+	}
+	if m := launchAckRe.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// resultText flattens a tool_result payload (a bare string or a list of
+// {type,text} blocks) into one string.
+func resultText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		var b strings.Builder
+		for _, blk := range blocks {
+			b.WriteString(blk.Text)
+		}
+		return b.String()
+	}
+	return ""
 }
 
 type todoItem struct {
@@ -138,13 +191,25 @@ type scanState struct {
 	order     []string
 	spawns    map[string]struct{ name, subtype string }
 	doneSub   map[string]bool
+	agentIDs  map[string]string // toolUseID -> async agentId (background subagents)
+}
+
+func newScanState() *scanState {
+	return &scanState{
+		spawns:   map[string]struct{ name, subtype string }{},
+		doneSub:  map[string]bool{},
+		agentIDs: map[string]string{},
+	}
 }
 
 type Scanner struct {
 	states map[string]*scanState
+	now    func() time.Time
 }
 
-func NewScanner() *Scanner { return &Scanner{states: map[string]*scanState{}} }
+func NewScanner() *Scanner {
+	return &Scanner{states: map[string]*scanState{}, now: time.Now}
+}
 
 func (sc *Scanner) Prune(live map[string]struct{}) {
 	for path := range sc.states {
@@ -165,7 +230,7 @@ type TranscriptSnapshot struct {
 func (sc *Scanner) Scan(path string) TranscriptSnapshot {
 	st := sc.states[path]
 	if st == nil {
-		st = &scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}}
+		st = newScanState()
 		sc.states[path] = st
 	}
 	f, err := os.Open(path)
@@ -174,7 +239,7 @@ func (sc *Scanner) Scan(path string) TranscriptSnapshot {
 	}
 	defer f.Close()
 	if info, err := f.Stat(); err == nil && info.Size() < st.offset {
-		*st = scanState{spawns: map[string]struct{ name, subtype string }{}, doneSub: map[string]bool{}} // rotated
+		*st = *newScanState() // rotated
 	}
 	if _, err := f.Seek(st.offset, io.SeekStart); err != nil {
 		return st.snapshot()
@@ -190,7 +255,63 @@ func (sc *Scanner) Scan(path string) TranscriptSnapshot {
 			break
 		}
 	}
-	return st.snapshot()
+	snap := st.snapshot()
+	sc.resolveSubs(path, &snap)
+	return snap
+}
+
+// resolveSubs decides the live state of each background subagent from its own
+// agent-<id>.jsonl (busy while it grows, DONE at end_turn or once stale). The
+// inline launch-ack tool_result only means "dispatched", never "finished".
+func (sc *Scanner) resolveSubs(path string, snap *TranscriptSnapshot) {
+	dir := strings.TrimSuffix(path, ".jsonl")
+	now := sc.now()
+	for i := range snap.Children {
+		c := &snap.Children[i]
+		if c.agentID == "" {
+			continue // synchronous/legacy child: already resolved in buildSubs
+		}
+		file := filepath.Join(dir, "subagents", "agent-"+c.agentID+".jsonl")
+		if subagentDone(file, now) {
+			markSubDone(c)
+		}
+	}
+}
+
+// subagentDone reports whether a background subagent's transcript shows it has
+// finished: its last assistant turn ended with stop_reason "end_turn", or the
+// file has gone stale (no writes for subStaleTTL). A missing/not-yet-created
+// file counts as still running.
+func subagentDone(file string, now time.Time) bool {
+	f, err := os.Open(file)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && now.Sub(info.ModTime()) >= subStaleTTL {
+		return true
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	lastStop := ""
+	for sc.Scan() {
+		var line transcriptLine
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
+			continue
+		}
+		if line.Message.Role == "assistant" && line.Message.StopReason != "" {
+			lastStop = line.Message.StopReason
+		}
+	}
+	return lastStop == "end_turn"
+}
+
+// markSubDone renders a subagent as DONE: a full determinate bar so StateOf
+// returns StateDone (not the idle pulse) and the model fades it after grace.
+func markSubDone(s *Session) {
+	s.Status = "idle"
+	s.Mode = Determinate
+	s.Done, s.Total = 1, 1
 }
 
 func (st *scanState) snapshot() TranscriptSnapshot {
@@ -237,7 +358,11 @@ func (st *scanState) apply(raw []byte) {
 			}
 			st.spawns[c.ID] = struct{ name, subtype string }{in.Description, in.SubagentType}
 		case c.Type == "tool_result" && c.ToolUseID != "":
-			st.doneSub[c.ToolUseID] = true
+			if aid := launchAckAgentID(c.Content); aid != "" {
+				st.agentIDs[c.ToolUseID] = aid // background async: dispatched, not finished
+			} else {
+				st.doneSub[c.ToolUseID] = true // synchronous result = completion
+			}
 		}
 	}
 }
@@ -247,8 +372,9 @@ func (st *scanState) buildSubs() []Session {
 	for _, id := range st.order {
 		sp := st.spawns[id]
 		s := Session{ID: id, Name: sp.name, Kind: "sub:" + sp.subtype, Mode: Indeterminate, Status: "busy"}
+		s.agentID = st.agentIDs[id]
 		if st.doneSub[id] {
-			s.Status = "idle"
+			markSubDone(&s) // synchronous/legacy Task: inline result is the completion
 		}
 		out = append(out, s)
 	}

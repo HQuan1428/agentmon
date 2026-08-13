@@ -102,7 +102,8 @@ func TestLayoutForWidthAndCompactModel(t *testing.T) {
 		t.Fatalf("wide layout=%+v", wide)
 	}
 	compact := LayoutForWidth(95)
-	if !compact.Compact || compact.ModelW != 0 || compact.SessionW != contentWidth(95) || compact.BarW != 12 || compact.TasksW != 7 {
+	wantSessionW := contentWidth(95) - (12 + 4) - 1 - compactStatusW // name shrinks to leave room for bar+status
+	if !compact.Compact || compact.ModelW != 0 || compact.SessionW != wantSessionW || compact.BarW != 12 || compact.TasksW != 7 {
 		t.Fatalf("compact layout=%+v", compact)
 	}
 	out := stripANSI(strings.Join(BodyLines([]collector.Session{{
@@ -129,11 +130,16 @@ func TestCompactModelContinuation(t *testing.T) {
 	if nameIdx < 0 || modelIdx != nameIdx+1 {
 		t.Fatalf("compact rows=%q", lines)
 	}
-	detail := stripANSI(lines[modelIdx])
-	for _, want := range []string{"model:", "[", "]", "2/5", "BUSY"} {
-		if !strings.Contains(detail, want) {
-			t.Fatalf("compact detail missing %q: %q", want, detail)
+	// name line carries bar + status; model line below carries only the model
+	nameLine := stripANSI(lines[nameIdx])
+	for _, want := range []string{"[", "]", "BUSY"} {
+		if !strings.Contains(nameLine, want) {
+			t.Fatalf("compact name line missing %q: %q", want, nameLine)
 		}
+	}
+	detail := stripANSI(lines[modelIdx])
+	if !strings.HasPrefix(detail, modelIndent) || strings.ContainsAny(detail, "[]") {
+		t.Fatalf("model line should be indented model only: %q", detail)
 	}
 	child := lineContaining(stripANSI(strings.Join(lines, "\n")), "review")
 	if strings.Contains(child, "gpt-5.6-sol") || strings.Contains(child, "child-model") {
@@ -144,7 +150,7 @@ func TestCompactModelContinuation(t *testing.T) {
 	if strings.Contains(narrow, "unknown") || strings.Contains(narrow, "child-model") {
 		t.Fatalf("narrow rows replaced or leaked model: %q", narrow)
 	}
-	if !strings.Contains(narrow, "model: …") {
+	if !strings.Contains(narrow, "…") {
 		t.Fatalf("narrow rows should truncate the evidenced model: %q", narrow)
 	}
 }

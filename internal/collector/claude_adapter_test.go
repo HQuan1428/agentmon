@@ -91,12 +91,12 @@ func TestClaudeAdapterPrunesTranscriptStateAfterSessionExit(t *testing.T) {
 
 func TestClaudeAdapterPreservesBlockedBackgroundState(t *testing.T) {
 	root := t.TempDir()
-	cwd := "/home/u/proj"
+	// bg jobs are owned by the jobs/ store now (daemon-backed, no live pid). A
+	// dead-pid sessions/*.json bg record must be ignored in favor of jobs/.
 	writeFile(t, filepath.Join(root, "sessions", "1.json"),
-		`{"pid":77,"sessionId":"sess1","cwd":"`+cwd+`","kind":"bg","name":"work","status":"busy","updatedAt":5,"jobId":"job1"}`)
-	writeFile(t, TranscriptPath(root, cwd, "sess1"), modelLine("claude-sonnet-4-5")+"\n")
+		`{"pid":88,"sessionId":"sess1","cwd":"/home/u/proj","kind":"bg","name":"stale","status":"busy","updatedAt":5,"jobId":"job1"}`)
 	writeFile(t, filepath.Join(root, "jobs", "job1", "state.json"),
-		`{"state":"blocked","detail":"pipeline 2/3 tasks done","needs":"approve"}`)
+		`{"state":"blocked","detail":"pipeline 2/3 tasks done","needs":"approve","name":"work","cwd":"/home/u/proj"}`)
 
 	got, err := NewClaudeAdapter(root).Discover(procscan.Snapshot{Processes: []procscan.Process{{PID: 77}}})
 	if err != nil {
@@ -106,7 +106,10 @@ func TestClaudeAdapterPreservesBlockedBackgroundState(t *testing.T) {
 		t.Fatalf("sessions=%+v", got)
 	}
 	s := got[0]
-	if !s.Blocked || s.JobState != "blocked" || s.NeedsHint != "approve" || s.Done != 2 || s.Total != 3 || s.Mode != Determinate || s.Model != "claude-sonnet-4-5" {
+	if s.ID != "claude:job1" || s.Kind != "bg" || s.Name != "work" || s.Project != "proj" {
+		t.Fatalf("identity=%+v", s)
+	}
+	if !s.Blocked || s.JobState != "blocked" || s.NeedsHint != "approve" || s.Done != 2 || s.Total != 3 || s.Mode != Determinate {
 		t.Fatalf("session=%+v", s)
 	}
 }

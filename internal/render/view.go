@@ -18,10 +18,16 @@ type Layout struct {
 	TasksW   int
 }
 
+const compactStatusW = 10 // room reserved for the STATUS word (⏸ BLOCKED)
+
 func LayoutForWidth(total int) Layout {
 	cw := contentWidth(total)
 	if cw < 92 {
-		return Layout{Compact: true, SessionW: cw, BarW: 12, TasksW: 7}
+		sessionW := cw - (12 + 4) - 1 - compactStatusW // bar[16] + gap + status
+		if sessionW < 8 {
+			sessionW = 8
+		}
+		return Layout{Compact: true, SessionW: sessionW, BarW: 12, TasksW: 7}
 	}
 	return Layout{SessionW: 32, ModelW: 20, BarW: 15, TasksW: 8}
 }
@@ -33,6 +39,7 @@ var (
 	projectHeadStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // ▾ project group
 	markerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // ▸ session marker
 	treeGrayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // subagent rows
+	modelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // model text, dim vs white name
 	needsStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true)
 	statusBusy       = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true) // ⚡ BUSY
 	statusSweep      = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
@@ -41,6 +48,23 @@ var (
 	statusIdle       = lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true) // ● IDLE
 	statusExit       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))            // ✕ EXIT
 )
+
+// agentHeadStyles color the ▾ agent header per kind, so agents read apart from
+// the project header (111) and from each other.
+var agentHeadStyles = map[collector.Agent]lipgloss.Style{
+	collector.AgentClaude:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("215")), // warm orange
+	collector.AgentCodex:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("114")), // green
+	collector.AgentOpenCode: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("80")),  // cyan
+	collector.AgentAider:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")), // pink
+}
+var agentHeadDefault = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245"))
+
+func agentHeadStyle(a collector.Agent) lipgloss.Style {
+	if st, ok := agentHeadStyles[a]; ok {
+		return st
+	}
+	return agentHeadDefault
+}
 
 // BodyLines renders the session table as individual lines (no column header,
 // no border — the frame adds those). Sessions are grouped under a ▾ project
@@ -66,13 +90,13 @@ func BodyLines(sessions []collector.Session, phase int, dim map[string]bool, tot
 			if !newProject && len(lines) > 0 {
 				lines = append(lines, "") // gap before an agent group within a project
 			}
-			lines = append(lines, projectHeadStyle.Render(truncate("  ▾ "+string(s.Agent), cw)))
+			lines = append(lines, agentHeadStyle(s.Agent).Render(truncate("  ▾ "+string(s.Agent), cw)))
 			curAgent = s.Agent
 		}
 		faint := dim[s.ID]
 		lines = append(lines, dimIf(sessionRow(s, phase, !faint, layout), faint))
 		if layout.Compact {
-			lines = append(lines, dimIf(compactSessionDetail(s, phase, !faint, layout, cw), faint))
+			lines = append(lines, dimIf(compactModelLine(s.Model, cw), faint))
 		}
 		if s.Blocked && s.NeedsHint != "" {
 			needs := "        needs: " + truncate(s.NeedsHint, 56)
@@ -98,7 +122,7 @@ const (
 // prefix + name, truncating the name to whatever room the prefix leaves so the
 // PROGRESS column always starts at the same offset.
 func nameCell(prefix, name string, width int) string {
-	avail := width - lipgloss.Width(prefix)
+	avail := width - lipgloss.Width(prefix) - 1 // -1 keeps a gap before the next column
 	if avail < 1 {
 		avail = 1
 	}
@@ -116,35 +140,22 @@ func sessionRow(s collector.Session, phase int, colored bool, layout Layout) str
 	if colored {
 		name = strings.Replace(name, "▸", markerStyle.Render("▸"), 1)
 	}
-	if layout.Compact {
-		return name
-	}
 	status := statusText(s)
 	if colored {
 		status = statusStyle(s).Render(status)
+	}
+	if layout.Compact {
+		return name + progressCell(s, phase, layout) + " " + status
 	}
 	return name + modelCell(s.Model, layout) + progressCell(s, phase, layout) + padRight(tasksText(s), layout.TasksW) + " " + status
 }
 
-func compactSessionDetail(s collector.Session, phase int, colored bool, layout Layout, width int) string {
-	const prefix = childIndent + "model: "
-	tasks := tasksText(s)
-	status := statusText(s)
-	barW := layout.BarW
-	fixed := lipgloss.Width(prefix) + 5 + lipgloss.Width(tasks) + lipgloss.Width(status)
-	if maxBar := width - fixed - 1; barW > maxBar {
-		barW = maxBar
-	}
-	if barW < 1 {
-		barW = 1
-	}
-	suffix := " [" + RenderBar(s, barW, phase) + "] " + tasks + " " + status
-	model := truncate(collector.ModelOrUnknown(s.Model), width-lipgloss.Width(prefix)-lipgloss.Width(suffix))
-	if colored {
-		status = statusStyle(s).Render(status)
-		suffix = " [" + RenderBar(s, barW, phase) + "] " + tasks + " " + status
-	}
-	return truncate(prefix+model+suffix, width)
+const modelIndent = "        " // 8 spaces: deeper than the name (▸ at col 4, name at col 6)
+
+// compactModelLine is the dim second line under a compact session row: just the
+// model, indented past the name so it reads as that session's detail.
+func compactModelLine(model string, width int) string {
+	return modelStyle.Render(truncate(modelIndent+collector.ModelOrUnknown(model), width))
 }
 
 // childRow builds a subagent row, indented under its session, in soft gray.
@@ -161,7 +172,7 @@ func modelCell(model string, layout Layout) string {
 	if layout.Compact {
 		return ""
 	}
-	return padRight(truncate(collector.ModelOrUnknown(model), layout.ModelW), layout.ModelW)
+	return modelStyle.Render(padRight(truncate(collector.ModelOrUnknown(model), layout.ModelW), layout.ModelW))
 }
 
 func blankModelCell(layout Layout) string {
