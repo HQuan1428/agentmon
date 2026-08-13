@@ -98,6 +98,33 @@ func TestComposeEmptyStateHero(t *testing.T) {
 	}
 }
 
+func TestComposeFillsHeightWithFewSessions(t *testing.T) {
+	// A short body must still make the frame span the full terminal height.
+	body := BodyLines([]collector.Session{
+		{ID: "w", Name: "work", Project: "proj", Mode: collector.Indeterminate, Status: "busy"},
+	}, 0, nil, 100)
+	out := Compose(100, 30, Counts{Active: 1, Busy: 1}, true, body, 0, false)
+	if n := strings.Count(out, "\n") + 1; n != 30 {
+		t.Errorf("compose produced %d lines, want full height 30:\n%s", n, out)
+	}
+	// Bottom border sits on the last line.
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[len(lines)-1], "╰") {
+		t.Errorf("bottom border should be on the last line, got %q", lines[len(lines)-1])
+	}
+}
+
+func TestComposeHeightZeroShowsAll(t *testing.T) {
+	// height 0 (no WindowSizeMsg yet): no padding, render all body lines.
+	body := BodyLines([]collector.Session{
+		{ID: "w", Name: "work", Project: "proj", Mode: collector.Indeterminate, Status: "busy"},
+	}, 0, nil, 100)
+	out := Compose(100, 0, Counts{Active: 1}, true, body, 0, false)
+	if strings.Count(out, "\n")+1 >= 30 {
+		t.Errorf("height 0 should not pad to a fixed height:\n%s", out)
+	}
+}
+
 func TestComposeCapsToHeight(t *testing.T) {
 	// More body than fits: output must never exceed the given height.
 	var many []collector.Session

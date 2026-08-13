@@ -206,6 +206,9 @@ func Compose(width, height int, c Counts, soundOn bool, body []string, scroll in
 		lines := body
 		if b := BodyBudget(height); b > 0 {
 			lines = windowLines(body, scroll, b)
+			for len(lines) < b { // pad short bodies so the frame fills the terminal height
+				lines = append(lines, "")
+			}
 		}
 		mid = columnHeader(cw, layout) + "\n" + strings.Join(lines, "\n")
 	}
