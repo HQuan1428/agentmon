@@ -23,7 +23,9 @@ builds:
 archives:
   - id: amo
     formats: [tar.gz]
-    name_template: "amo_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # version-less name so curl installs can hit the stable
+    # releases/latest/download/amo_linux_<arch>.tar.gz URL
+    name_template: "amo_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt

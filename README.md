@@ -11,10 +11,23 @@ a decision.
 
 ## Install
 
-Download the latest binary from [Releases](../../releases):
+Quick install (Linux, amd64/arm64) — downloads the latest release into
+`~/.local/bin`:
 
 ```sh
-tar -xzf amo_*_linux_amd64.tar.gz   # or _arm64
+curl -fsSL https://raw.githubusercontent.com/HQuan1428/agentmon/main/install.sh | sh
+```
+
+Pick a different directory with `BIN_DIR` (use `sudo` if it needs root):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HQuan1428/agentmon/main/install.sh | BIN_DIR=/usr/local/bin sh
+```
+
+Or download a tarball manually from [Releases](../../releases):
+
+```sh
+tar -xzf amo_linux_amd64.tar.gz     # or _arm64
 chmod +x amo
 ./amo                                # or move it onto your PATH: sudo mv amo /usr/local/bin/
 ```
