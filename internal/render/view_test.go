@@ -96,10 +96,19 @@ func TestBodyLinesAgentHierarchy(t *testing.T) {
 	}
 }
 
+// wideRowWidth is the exact content width a wide row occupies:
+// name + model + (bar+4 brackets/pad) + tasks + 1 space + status reserve.
+func wideRowWidth(l Layout) int {
+	return l.SessionW + l.ModelW + (l.BarW + 4) + l.TasksW + 1 + compactStatusW
+}
+
 func TestLayoutForWidthAndCompactModel(t *testing.T) {
 	wide := LayoutForWidth(96)
-	if wide.Compact || wide.SessionW != 32 || wide.ModelW != 20 || wide.BarW != 15 || wide.TasksW != 8 {
+	if wide.Compact || wide.ModelW != 20 || wide.TasksW != 8 {
 		t.Fatalf("wide layout=%+v", wide)
+	}
+	if got := wideRowWidth(wide); got != contentWidth(96) {
+		t.Fatalf("wide row width=%d, want cw=%d (layout=%+v)", got, contentWidth(96), wide)
 	}
 	compact := LayoutForWidth(95)
 	wantSessionW := contentWidth(95) - (12 + 4) - 1 - compactStatusW // name shrinks to leave room for bar+status
@@ -111,6 +120,25 @@ func TestLayoutForWidthAndCompactModel(t *testing.T) {
 	}}, 0, nil, 80), "\n"))
 	if !strings.Contains(out, "gpt-5.6-sol") {
 		t.Fatalf("compact body should continue model:\n%s", out)
+	}
+}
+
+func TestWideLayoutIsResponsive(t *testing.T) {
+	narrow := LayoutForWidth(96)
+	wide := LayoutForWidth(200)
+	// Both fill their content width exactly.
+	if got := wideRowWidth(narrow); got != contentWidth(96) {
+		t.Fatalf("cw=96 row width=%d want %d", got, contentWidth(96))
+	}
+	if got := wideRowWidth(wide); got != contentWidth(200) {
+		t.Fatalf("cw=200 row width=%d want %d", got, contentWidth(200))
+	}
+	// Bar grows with width; name grows but is capped.
+	if wide.BarW <= narrow.BarW {
+		t.Errorf("bar should widen with terminal: narrow=%d wide=%d", narrow.BarW, wide.BarW)
+	}
+	if wide.SessionW > maxSessionW {
+		t.Errorf("name column should be capped at %d, got %d", maxSessionW, wide.SessionW)
 	}
 }
 

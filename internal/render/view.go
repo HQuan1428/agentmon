@@ -20,6 +20,12 @@ type Layout struct {
 
 const compactStatusW = 10 // room reserved for the STATUS word (⏸ BLOCKED)
 
+const (
+	wideModelW  = 20 // MODEL column (fixed)
+	wideTasksW  = 8  // TASKS column (fixed)
+	maxSessionW = 50 // name column ceiling: past this, extra width feeds the bar
+)
+
 func LayoutForWidth(total int) Layout {
 	cw := contentWidth(total)
 	if cw < 92 {
@@ -29,7 +35,15 @@ func LayoutForWidth(total int) Layout {
 		}
 		return Layout{Compact: true, SessionW: sessionW, BarW: 12, TasksW: 7}
 	}
-	return Layout{SessionW: 32, ModelW: 20, BarW: 15, TasksW: 8}
+	// Wide: MODEL/TASKS/STATUS fixed; name and bar split the rest evenly so the
+	// row fills the full content width instead of clustering on the left.
+	// row = name + model + (bar+4) + tasks + " " + status
+	rest := cw - wideModelW - wideTasksW - compactStatusW - 1 - 4
+	sessionW := rest / 2
+	if sessionW > maxSessionW {
+		sessionW = maxSessionW
+	}
+	return Layout{SessionW: sessionW, ModelW: wideModelW, BarW: rest - sessionW, TasksW: wideTasksW}
 }
 
 // Row/column styling. In a non-TTY (tests, pipes) lipgloss strips colors,
@@ -39,7 +53,8 @@ var (
 	projectHeadStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")) // ▾ project group
 	markerStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // ▸ session marker
 	treeGrayStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // subagent rows
-	modelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // model text, dim vs white name
+	modelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))            // model on the compact 2nd line (dim gray)
+	modelWideStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("231"))            // MODEL column when wide (white, roomy)
 	needsStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Italic(true)
 	statusBusy       = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true) // ⚡ BUSY
 	statusSweep      = lipgloss.NewStyle().Foreground(lipgloss.Color("44")).Bold(true)  // 🔄 SWEEP
@@ -172,7 +187,7 @@ func modelCell(model string, layout Layout) string {
 	if layout.Compact {
 		return ""
 	}
-	return modelStyle.Render(padRight(truncate(collector.ModelOrUnknown(model), layout.ModelW), layout.ModelW))
+	return modelWideStyle.Render(padRight(truncate(collector.ModelOrUnknown(model), layout.ModelW), layout.ModelW))
 }
 
 func blankModelCell(layout Layout) string {
