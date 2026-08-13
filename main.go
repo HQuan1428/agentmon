@@ -12,6 +12,7 @@ import (
 	"agentmon/internal/collector"
 	"agentmon/internal/model"
 	"agentmon/internal/procscan"
+	"agentmon/internal/render"
 	"agentmon/internal/sound"
 )
 
@@ -19,7 +20,13 @@ func main() {
 	noSound := flag.Bool("no-sound", false, "disable chimes")
 	testSound := flag.Bool("test-sound", false, "play both chimes and report audio status, then exit")
 	interval := flag.Duration("interval", time.Second, "poll interval")
+	version := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *version {
+		fmt.Println("amo", render.Version)
+		return
+	}
 
 	if *testSound {
 		runSoundTest()
@@ -38,7 +45,7 @@ func main() {
 
 	m := model.New(collector.NewDefault(home, procscan.NewProcFS()), player, *interval)
 	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "agentmon error:", err)
+		fmt.Fprintln(os.Stderr, "amo error:", err)
 		os.Exit(1)
 	}
 }

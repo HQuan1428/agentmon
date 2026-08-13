@@ -84,7 +84,7 @@ func NewPlayer() *Player {
 	c, err := pulse.NewClient()
 	if err != nil {
 		// WSLg/headless without a reachable PulseAudio server lands here.
-		log.Printf("agentmon: audio disabled (%v)", err)
+		log.Printf("amo: audio disabled (%v)", err)
 		return p
 	}
 	p.client = c

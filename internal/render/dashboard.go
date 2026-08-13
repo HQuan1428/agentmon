@@ -9,15 +9,16 @@ import (
 	"agentmon/internal/collector"
 )
 
-// Version is shown as a badge in the header. main may override it.
-var Version = "0.1.0"
+// Version is reported by `amo --version`; release builds inject the tag via
+// -ldflags "-X agentmon/internal/render.Version=<tag>". Not shown in the header.
+var Version = "dev"
 
-// eyeArt is a compact ASCII rendering of the monitoring "eye" icon
-// (noun-monitoring-3554650.svg): almond lids around a round iris.
+// eyeArt renders the brand eye as a single-line <(◉)> glyph on the middle row;
+// the top/bottom rows are blank padding so the 3-line header band is unchanged.
 var eyeArt = []string{
-	" ,---. ",
-	"( (◉) )",
-	" `---' ",
+	"       ",
+	" <(◉)> ",
+	"       ",
 }
 
 const (
@@ -30,7 +31,6 @@ const (
 var (
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51"))
 	eyeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("44"))
-	verBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("189")).Background(lipgloss.Color("60")).Padding(0, 1)
 	colHeadStyle = lipgloss.NewStyle().Bold(true).Faint(true)
 	ruleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	sepStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("62")) // header/table divider, frame color
@@ -105,7 +105,7 @@ func header(cw int, c Counts, soundOn bool) string {
 		left = eyeStyle.Render(eyeArt[1])
 		right = counterCompact(c) + "  " + bellIcon(soundOn)
 	} else {
-		left = eyeStyle.Render(eyeArt[1]) + "  " + titleStyle.Render("agentmon") + " " + verBadge.Render("v"+Version)
+		left = eyeStyle.Render(eyeArt[1]) + "  " + titleStyle.Render("Agent Monitor")
 		right = counterBadge(c) + "   " + bellBadge(soundOn)
 		if lipgloss.Width(right) > cw-lipgloss.Width(left)-emojiSlack {
 			right = counterCompact(c) + "  " + bellBadge(soundOn)

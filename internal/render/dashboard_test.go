@@ -21,10 +21,13 @@ func TestComposeChrome(t *testing.T) {
 		}
 	}
 	// Header identity + version badge + column headers + footer + counter + bell.
-	for _, want := range []string{"agentmon", "v0.1.0", "PROJECT / AGENT / SESSION", "MODEL", "PROGRESS", "TASKS", "STATUS", "quit", "sound", "scroll", "active", "🔊 ON"} {
+	for _, want := range []string{"Agent Monitor", "PROJECT / AGENT / SESSION", "MODEL", "PROGRESS", "TASKS", "STATUS", "quit", "sound", "scroll", "active", "🔊 ON"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose missing %q", want)
 		}
+	}
+	if strings.Contains(out, "v0.1.0") || strings.Contains(out, "vdev") {
+		t.Error("header should not show a version badge")
 	}
 	if strings.Contains(out, "🔇 OFF") {
 		t.Error("bell should read ON when soundOn=true")
@@ -57,8 +60,8 @@ func TestComposeHasHeaderSeparator(t *testing.T) {
 func TestSmallHeaderResponsive(t *testing.T) {
 	// A narrow frame drops the title/version and shows only icons + counts.
 	out := stripANSI(Compose(40, 20, Counts{Active: 2, Busy: 1}, true, nil, 0, true))
-	if strings.Contains(out, "agentmon") || strings.Contains(out, "v0.1.0") {
-		t.Errorf("small header should drop title/version:\n%s", out)
+	if strings.Contains(out, "Agent Monitor") {
+		t.Errorf("small header should drop the title:\n%s", out)
 	}
 	if strings.Contains(out, "active") || strings.Contains(out, "busy") {
 		t.Errorf("small header should use icon+count, not words:\n%s", out)

@@ -1,0 +1,40 @@
+version: 2
+
+project_name: amo
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: amo
+    binary: amo
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux # amo reads /proc via a linux-only procscan build; other OSes won't compile
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X agentmon/internal/render.Version={{ .Version }}
+
+archives:
+  - id: amo
+    formats: [tar.gz]
+    name_template: "amo_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: false
