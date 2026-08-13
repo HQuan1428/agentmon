@@ -32,11 +32,29 @@ checksum:
 
 changelog:
   sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - "^Merge "
 
 release:
   draft: false
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/HQuan1428/agentmon/main/install.sh | sh
+    ```
+
+    Linux amd64/arm64. See the [README](https://github.com/HQuan1428/agentmon#readme) for usage.
