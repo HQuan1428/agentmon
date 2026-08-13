@@ -9,6 +9,10 @@ a decision.
 > **Linux only.** `amo` reads process state from `/proc`, so it runs on Linux
 > (including WSL2). macOS/Windows are not supported.
 
+> **Claude Code: latest version only.** `amo` parses Claude Code's current
+> session/transcript format. Older Claude Code versions may not be detected —
+> keep Claude Code updated for accurate readings.
+
 ## Install
 
 Quick install (Linux, amd64/arm64) — downloads the latest release into
